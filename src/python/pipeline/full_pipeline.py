@@ -24,37 +24,70 @@ logger = logging.getLogger(__name__)
 # Rule-based detection
 # ---------------------------------------------------------------------------
 
+def _compute_source_hashes(
+    ids: set, normalized_dir: Path,
+) -> dict:
+    """Compute MD5 hashes of normalized source files for all IDs."""
+    import hashlib
+    hashes = {}
+    for fid in ids:
+        path = normalized_dir / f"{fid}.java"
+        if path.exists():
+            try:
+                content = path.read_bytes()
+                hashes[fid] = hashlib.md5(content).hexdigest()
+            except OSError:
+                hashes[fid] = None
+        else:
+            hashes[fid] = None
+    return hashes
+
+
 def detect_type1_type2(
-    df: pd.DataFrame, token_data: dict,
+    df: pd.DataFrame, token_data: dict, normalized_dir: Path,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Detect type-1 (identical normalized) and type-2 (identical abstracted) clones.
+    """Detect type-1 (identical normalized source) and type-2 (identical abstracted tokens).
+
+    Type-1: normalized source code is byte-identical (same after normalization).
+    Type-2: abstracted token sequences are identical but source differs
+            (same structure, different identifiers/literals).
 
     Returns: (type1_pairs, type2_pairs, remaining_pairs)
     """
+    # Collect all unique IDs from the dataframe
+    all_ids = set(df["id1"].tolist()) | set(df["id2"].tolist())
+    logger.info("Computing source hashes for %d unique files...", len(all_ids))
+    source_hashes = _compute_source_hashes(all_ids, normalized_dir)
+
     type1_idx = []
+    type2_idx = []
 
     for idx, row in df.iterrows():
         id1, id2 = row["id1"], row["id2"]
         if id1 not in token_data or id2 not in token_data:
             continue
 
+        h1 = source_hashes.get(id1)
+        h2 = source_hashes.get(id2)
         t1 = token_data[id1]["token_ids"]
         t2 = token_data[id2]["token_ids"]
 
-        # Type-1: identical token sequences
-        if t1 == t2:
+        if h1 is not None and h2 is not None and h1 == h2:
+            # Type-1: identical normalized source
             type1_idx.append(idx)
-        # Type-2: could check AST structure similarity (skip for now,
-        # since token abstraction already handles this)
-        # The ML model handles type-3 vs non-clone
+        elif t1 == t2:
+            # Type-2: identical abstracted tokens but different source
+            type2_idx.append(idx)
 
     type1_pairs = df.loc[type1_idx].reset_index(drop=True)
-    remaining = df.drop(type1_idx).reset_index(drop=True)
+    type2_pairs = df.loc[type2_idx].reset_index(drop=True)
+    remaining = df.drop(type1_idx + type2_idx).reset_index(drop=True)
 
-    logger.info("Type-1 detected: %d pairs", len(type1_pairs))
+    logger.info("Type-1 detected: %d pairs (identical normalized source)", len(type1_pairs))
+    logger.info("Type-2 detected: %d pairs (identical abstracted tokens)", len(type2_pairs))
     logger.info("Remaining for ML: %d pairs", len(remaining))
 
-    return type1_pairs, pd.DataFrame(), remaining
+    return type1_pairs, type2_pairs, remaining
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +225,7 @@ def main() -> None:
     parser.add_argument("--lsh-hashes", type=int, default=128)
     parser.add_argument("--lsh-bands", type=int, default=16)
     parser.add_argument("--shingle-k", type=int, default=3)
+    parser.add_argument("--normalized-dir", type=Path, default=Path("data/processed/normalized"))
     args = parser.parse_args()
 
     total_start = time.time()
@@ -219,7 +253,9 @@ def main() -> None:
     # Step 1: Detect type-1 clones (exact match after tokenization)
     logger.info("=== Step 1: Type-1 Detection ===")
     step1_start = time.time()
-    type1_pairs, type2_pairs, after_rules = detect_type1_type2(rule_based_df, token_data)
+    type1_pairs, type2_pairs, after_rules = detect_type1_type2(
+        rule_based_df, token_data, args.normalized_dir,
+    )
     step1_time = time.time() - step1_start
     logger.info("Type-1: %d detected in %.1fs", len(type1_pairs), step1_time)
 
@@ -311,6 +347,7 @@ def main() -> None:
 
     # Add timing and LSH metrics
     metrics["type1_detected"] = len(type1_pairs)
+    metrics["type2_detected"] = len(type2_pairs)
     metrics["lsh_candidates"] = len(lsh_candidates)
     metrics["lsh_total_pairs"] = len(ml_pair_set)
     metrics["lsh_reduction_ratio"] = 1 - len(lsh_candidates) / max(len(ml_pair_set), 1)

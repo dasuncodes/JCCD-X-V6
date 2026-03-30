@@ -8,22 +8,26 @@ from pathlib import Path
 
 import joblib
 import matplotlib
-
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.metrics import (
-    accuracy_score,
-    average_precision_score,
-    confusion_matrix,
-    f1_score,
-    precision_score,
-    recall_score,
-    roc_auc_score,
-)
+from sklearn.metrics import confusion_matrix, roc_curve, precision_recall_curve
 from sklearn.model_selection import StratifiedKFold
 
+from src.python.evaluation.metrics import (
+    compute_classification_metrics,
+    compute_fold_metrics,
+    aggregate_cv_metrics,
+    compute_cv_stability,
+)
+from src.python.evaluation.plots import (
+    plot_roc_curves,
+    plot_pr_curves,
+    plot_cv_variance,
+    plot_feature_importance,
+    plot_confusion_matrix,
+)
 from src.python.model.models import get_models
 from src.python.utils.io import save_json
 
@@ -35,37 +39,31 @@ logger = logging.getLogger(__name__)
 # Evaluation
 # ---------------------------------------------------------------------------
 
-def evaluate_fold(y_true, y_pred, y_proba=None) -> dict:
-    """Compute metrics for a single fold."""
-    metrics = {
-        "accuracy": float(accuracy_score(y_true, y_pred)),
-        "precision": float(precision_score(y_true, y_pred, zero_division=0)),
-        "recall": float(recall_score(y_true, y_pred, zero_division=0)),
-        "f1": float(f1_score(y_true, y_pred, zero_division=0)),
-    }
+def evaluate_fold(y_true, y_pred, y_proba=None, fold_idx=0) -> dict:
+    """Compute metrics for a single fold with ROC/PR curve data."""
+    metrics = compute_fold_metrics(y_true, y_pred, y_proba, fold_idx)
+
+    # Add ROC and PR curve data if probabilities available
     if y_proba is not None:
         try:
-            metrics["roc_auc"] = float(roc_auc_score(y_true, y_proba))
-        except ValueError:
-            metrics["roc_auc"] = 0.0
+            fpr, tpr, _ = roc_curve(y_true, y_proba)
+            metrics["fpr"] = fpr.tolist()
+            metrics["tpr"] = tpr.tolist()
+        except (ValueError, IndexError):
+            pass
+
         try:
-            metrics["pr_auc"] = float(average_precision_score(y_true, y_proba))
-        except ValueError:
-            metrics["pr_auc"] = 0.0
-    cm = confusion_matrix(y_true, y_pred)
-    if cm.shape == (2, 2):
-        tn, fp, fn, tp = cm.ravel()
-        metrics["tp"] = int(tp)
-        metrics["fp"] = int(fp)
-        metrics["tn"] = int(tn)
-        metrics["fn"] = int(fn)
-        metrics["fpr"] = float(fp / (fp + tn)) if (fp + tn) > 0 else 0.0
-        metrics["fnr"] = float(fn / (fn + tp)) if (fn + tp) > 0 else 0.0
+            precision, recall, _ = precision_recall_curve(y_true, y_proba)
+            metrics["precision"] = precision.tolist()
+            metrics["recall"] = recall.tolist()
+        except (ValueError, IndexError):
+            pass
+
     return metrics
 
 
 def cross_validate_model(model, X, y, cv=5, seed=42) -> dict:
-    """Run stratified k-fold CV and return per-fold + aggregate metrics."""
+    """Run stratified k-fold CV and return per-fold + aggregate metrics with curve data."""
     skf = StratifiedKFold(n_splits=cv, shuffle=True, random_state=seed)
     fold_results = []
 
@@ -83,17 +81,11 @@ def cross_validate_model(model, X, y, cv=5, seed=42) -> dict:
         elif hasattr(model, "decision_function"):
             y_proba = model.decision_function(X_val)
 
-        fold_metrics = evaluate_fold(y_val, y_pred, y_proba)
-        fold_metrics["fold"] = fold_idx
+        fold_metrics = evaluate_fold(y_val, y_pred, y_proba, fold_idx)
         fold_results.append(fold_metrics)
 
     # Aggregate
-    metric_keys = [k for k in fold_results[0] if k != "fold"]
-    aggregate = {}
-    for key in metric_keys:
-        values = [f[key] for f in fold_results]
-        aggregate[f"{key}_mean"] = float(np.mean(values))
-        aggregate[f"{key}_std"] = float(np.std(values))
+    aggregate = aggregate_cv_metrics(fold_results)
 
     return {"folds": fold_results, "aggregate": aggregate}
 
@@ -171,6 +163,12 @@ def train_and_evaluate(
     serializable["best_model"] = best_model_name
     serializable["best_f1"] = best_f1
     serializable["feature_importance"] = {k: float(v) for k, v in feature_importance.items()}
+
+    # Add stability metrics
+    for name, res in all_results.items():
+        stability = compute_cv_stability(res["folds"])
+        serializable[name]["stability"] = stability
+
     save_json(serializable, eval_dir / "cv_results.json")
 
     return all_results, best_model_name, best_model, feature_importance
@@ -187,76 +185,64 @@ def generate_training_plots(
     feature_names: list[str],
     plots_dir: Path,
 ) -> None:
+    """Generate all training-related plots using centralized plotting module."""
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    # ROC curves per model
-    fig, ax = plt.subplots(figsize=(8, 6))
+    # ROC curves per model (with per-fold curves + mean)
+    logger.info("Generating ROC curves...")
     for name, res in all_results.items():
-        aucs = [f.get("roc_auc", 0) for f in res["folds"]]
-        ax.plot(range(1, len(aucs) + 1), aucs, "o-", label=f"{name} (mean={np.mean(aucs):.3f})")
-    ax.set_xlabel("Fold")
-    ax.set_ylabel("ROC-AUC")
-    ax.set_title("ROC-AUC per Fold by Model")
-    ax.legend(fontsize=8)
-    ax.set_ylim(0.5, 1.0)
-    plt.tight_layout()
-    fig.savefig(plots_dir / "roc_auc_per_fold.png", dpi=150)
-    plt.close(fig)
+        plot_roc_curves(
+            res["folds"],
+            plots_dir / f"roc_curves_{name}.png",
+            title=f"ROC Curves - {name} (5-Fold CV)",
+            show_mean=True,
+        )
+
+    # PR curves per model (with per-fold curves + mean)
+    logger.info("Generating PR curves...")
+    for name, res in all_results.items():
+        plot_pr_curves(
+            res["folds"],
+            plots_dir / f"pr_curves_{name}.png",
+            title=f"Precision-Recall Curves - {name} (5-Fold CV)",
+            show_mean=True,
+        )
 
     # CV metric variance box plots
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    for ax, metric in zip(axes, ["f1", "accuracy", "roc_auc"]):
-        data = []
-        labels = []
-        for name, res in all_results.items():
-            vals = [f.get(metric, 0) for f in res["folds"]]
-            data.append(vals)
-            labels.append(name)
-        ax.boxplot(data, tick_labels=labels)
-        ax.set_title(metric.upper())
-        ax.tick_params(axis="x", rotation=45)
-    plt.tight_layout()
-    fig.savefig(plots_dir / "cv_metric_variance.png", dpi=150)
-    plt.close(fig)
+    logger.info("Generating CV variance plots...")
+    for name, res in all_results.items():
+        plot_cv_variance(
+            res["folds"],
+            plots_dir / f"cv_variance_{name}.png",
+            metrics=["f1", "accuracy", "roc_auc"],
+            title=f"Cross-Validation Metric Variance - {name}",
+        )
 
     # Feature importance bar chart
     if feature_importance:
-        fig, ax = plt.subplots(figsize=(10, 6))
-        names = list(feature_importance.keys())[:15]
-        values = [feature_importance[n] for n in names]
-        ax.barh(range(len(names)), values)
-        ax.set_yticks(range(len(names)))
-        ax.set_yticklabels(names, fontsize=8)
-        ax.set_xlabel("Importance")
-        ax.set_title(f"Feature Importance ({best_model_name})")
-        ax.invert_yaxis()
-        plt.tight_layout()
-        fig.savefig(plots_dir / "feature_importance.png", dpi=150)
-        plt.close(fig)
+        logger.info("Generating feature importance plot...")
+        plot_feature_importance(
+            feature_importance,
+            plots_dir / "feature_importance.png",
+            title=f"Feature Importance ({best_model_name})",
+            top_n=20,
+        )
 
     # Confusion matrix on test set
     if best_model is not None and len(X_test) > 0:
+        logger.info("Generating confusion matrix...")
         y_pred = best_model.predict(X_test)
         cm = confusion_matrix(y_test, y_pred)
-        fig, ax = plt.subplots(figsize=(6, 5))
-        im = ax.imshow(cm, cmap="Blues")
-        ax.set_xticks([0, 1])
-        ax.set_yticks([0, 1])
-        ax.set_xticklabels(["NON", "Type-3"])
-        ax.set_yticklabels(["NON", "Type-3"])
-        ax.set_xlabel("Predicted")
-        ax.set_ylabel("Actual")
-        ax.set_title(f"Confusion Matrix ({best_model_name})")
-        for i in range(2):
-            for j in range(2):
-                ax.text(j, i, str(cm[i, j]), ha="center", va="center", fontsize=14)
-        fig.colorbar(im, ax=ax)
-        plt.tight_layout()
-        fig.savefig(plots_dir / "confusion_matrix.png", dpi=150)
-        plt.close(fig)
+        plot_confusion_matrix(
+            cm,
+            plots_dir / "confusion_matrix.png",
+            class_names=["NON", "Type-3"],
+            title=f"Confusion Matrix ({best_model_name})",
+        )
 
         # Predicted probability histogram
         if hasattr(best_model, "predict_proba"):
+            logger.info("Generating probability histogram...")
             y_proba = best_model.predict_proba(X_test)[:, 1]
             fig, ax = plt.subplots(figsize=(8, 5))
             d0 = y_proba[y_test == 0]
@@ -324,7 +310,8 @@ def main() -> None:
     y_proba = None
     if hasattr(best_model, "predict_proba"):
         y_proba = best_model.predict_proba(X_test_bin)[:, 1]
-    test_metrics = evaluate_fold(y_test_bin, y_pred, y_proba)
+
+    test_metrics = compute_classification_metrics(y_test_bin, y_pred, y_proba)
     test_metrics["total_test_samples"] = int(len(y_test))
     test_metrics["binary_test_samples"] = int(binary_mask.sum())
     save_json(test_metrics, args.eval_dir / "test_metrics.json")
