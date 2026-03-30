@@ -53,7 +53,46 @@ def load_all_datasets(raw_dir: Path) -> dict[str, pd.DataFrame]:
 # ---------------------------------------------------------------------------
 
 def assign_labels(datasets: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
-    """label=1 for type-3 clones (type3 + type4), label=0 for NON (type5 + nonclone)."""
+    """
+    Assign labels for training and testing.
+
+    Training set (binary):
+    - label=1 for type-3 clones (type3 + type4)
+    - label=0 for NON (type5 + nonclone)
+
+    Testing set (multi-class):
+    - label=1 for type-1 clones
+    - label=2 for type-2 clones
+    - label=3 for type-3 clones (type3 + type4)
+    - label=0 for NON (type5 + nonclone)
+    """
+    labelled = {}
+    for key, df in datasets.items():
+        df = df.copy()
+        # For testing: preserve actual type labels
+        if key == "type1":
+            df["label"] = 1  # Type-1 clones
+        elif key == "type2":
+            df["label"] = 2  # Type-2 clones
+        elif key in ("type3", "type4"):
+            df["label"] = 3  # Type-3 clones
+        elif key in ("type5", "nonclone"):
+            df["label"] = 0  # Non-clones
+        else:
+            df["label"] = -1  # Unknown
+        labelled[key] = df
+    return labelled
+
+
+def assign_training_labels(datasets: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """
+    Assign binary labels for training set only.
+
+    Training set (binary):
+    - label=1 for type-3 clones (type3 + type4)
+    - label=0 for NON (type5 + nonclone)
+    - label=-1 for type1, type2 (excluded from training)
+    """
     labelled = {}
     for key, df in datasets.items():
         df = df.copy()
@@ -123,36 +162,67 @@ def balance_training_set(df: pd.DataFrame, seed: int = 42) -> pd.DataFrame:
 def build_datasets(
     validated: dict[str, pd.DataFrame], test_ratio: float = 0.3, seed: int = 42
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Construct training and testing datasets."""
+    """
+    Construct training and testing datasets.
+
+    Training set (binary, balanced):
+    - 70% of type3+type4 (label=1) and type5+nonclone (label=0)
+    - Balanced classes
+    - Type-1 and Type-2 excluded
+
+    Testing set (multi-class, original distribution):
+    - 100% of type-1 (label=1)
+    - 100% of type-2 (label=2)
+    - 30% of type-3+type-4 (label=3)
+    - 30% of type-5+nonclone (label=0)
+    """
+    # Split ABC dataset (type3, type4, type5, nonclone)
     abc_parts = []
     for key in ("type3", "type4", "type5", "nonclone"):
         if key in validated:
             abc_parts.append(validated[key])
     abc = pd.concat(abc_parts, ignore_index=True)
-    logger.info("abc dataset: %d rows (type3+type4+type5+nonclone)", len(abc))
+    logger.info("ABC dataset: %d rows (type3+type4+type5+nonclone)", len(abc))
+
+    # Create binary labels for stratified split
+    abc_binary = abc.copy()
+    abc_binary["binary_label"] = abc_binary["label"].apply(lambda x: 1 if x == 3 else 0)
 
     train_abc, test_abc = train_test_split(
-        abc, test_size=test_ratio, random_state=seed, stratify=abc["label"]
+        abc_binary, test_size=test_ratio, random_state=seed, stratify=abc_binary["binary_label"]
     )
-    train_abc = train_abc.reset_index(drop=True)
-    test_abc = test_abc.reset_index(drop=True)
 
-    # Balance the training set
+    # Drop the temporary binary_label column
+    train_abc = train_abc.drop(columns=["binary_label"]).reset_index(drop=True)
+    test_abc = test_abc.drop(columns=["binary_label"]).reset_index(drop=True)
+
+    # Balance the training set (binary: Type-3 vs Non-clone)
     train_abc = balance_training_set(train_abc, seed=seed)
 
-    # Append type1 + type2 to test set for rule-based evaluation
+    # Testing set: preserve multi-class labels
+    # Append type-1 and type-2 to test set (these keep their labels 1 and 2)
     test_extra = []
     for key in ("type1", "type2"):
         if key in validated:
             test_extra.append(validated[key])
+
     if test_extra:
         test_extra_df = pd.concat(test_extra, ignore_index=True)
         testing = pd.concat([test_abc, test_extra_df], ignore_index=True)
     else:
         testing = test_abc
 
-    logger.info("Training set: %d rows (balanced)", len(train_abc))
-    logger.info("Testing set: %d rows (incl. type1/type2)", len(testing))
+    logger.info("Training set: %d rows (balanced, binary)", len(train_abc))
+    logger.info("Testing set: %d rows (multi-class: type-1/2/3/non)", len(testing))
+
+    # Log test set distribution
+    test_distribution = testing["label"].value_counts().to_dict()
+    logger.info("Test set distribution: %s", {
+        0: test_distribution.get(0, 0),  # Non-clones
+        1: test_distribution.get(1, 0),  # Type-1
+        2: test_distribution.get(2, 0),  # Type-2
+        3: test_distribution.get(3, 0),  # Type-3
+    })
 
     return train_abc, testing
 
@@ -298,16 +368,28 @@ def main() -> None:
     logger.info("Loading datasets...")
     datasets = load_all_datasets(args.raw_dir)
 
-    # 2. Label
+    # 2. Label for testing (multi-class)
+    logger.info("Assigning labels (multi-class for testing)...")
     labelled = assign_labels(datasets)
 
     # 3. Validate
     logger.info("Validating source files...")
     validated, removal_stats = validate_source_files(labelled, args.source_dir)
 
-    # 4. Split
+    # 4. Re-label for training (binary)
+    logger.info("Re-labeling for training (binary)...")
+    validated_train = assign_training_labels(datasets)
+    _, removal_stats_train = validate_source_files(validated_train, args.source_dir)
+
+    # Use validated for testing, validated_train for training
+    validated_for_train = {}
+    for key in ("type3", "type4", "type5", "nonclone"):
+        if key in validated_train:
+            validated_for_train[key] = validated_train[key]
+
+    # 5. Split
     logger.info("Building train/test splits...")
-    training, testing = build_datasets(validated, test_ratio=args.test_ratio, seed=args.seed)
+    training, testing = build_datasets(validated_for_train, test_ratio=args.test_ratio, seed=args.seed)
 
     # 5. Save
     save_csv(training, args.output_dir / "training_dataset.csv")

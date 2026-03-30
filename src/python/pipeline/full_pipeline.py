@@ -244,11 +244,22 @@ def main() -> None:
     test_df = pd.read_csv(args.data_dir / "testing_dataset.csv")
     logger.info("Test dataset: %d pairs", len(test_df))
 
-    # Separate type-1/2 (label=-1) from ML-evaluable (label 0/1)
-    rule_based_df = test_df[test_df["label"] == -1].reset_index(drop=True)
-    ml_df = test_df[test_df["label"] >= 0].reset_index(drop=True)
-    logger.info("Rule-based (type-1/2): %d pairs", len(rule_based_df))
-    logger.info("ML-evaluable: %d pairs", len(ml_df))
+    # Test set has multi-class labels:
+    # label=0: Non-clones
+    # label=1: Type-1 clones
+    # label=2: Type-2 clones
+    # label=3: Type-3 clones
+
+    # Separate rule-based (type-1, type-2) from ML-evaluable (type-3, non-clones)
+    rule_based_df = test_df[test_df["label"].isin([1, 2])].reset_index(drop=True)
+    ml_df = test_df[test_df["label"].isin([0, 3])].reset_index(drop=True)
+
+    # Convert ML labels to binary for classification (3 -> 1 for Type-3)
+    ml_df = ml_df.copy()
+    ml_df["binary_label"] = ml_df["label"].apply(lambda x: 1 if x == 3 else 0)
+
+    logger.info("Rule-based (type-1/type-2): %d pairs", len(rule_based_df))
+    logger.info("ML-evaluable (type-3/non-clones): %d pairs", len(ml_df))
 
     # Step 1: Detect type-1 clones (exact match after tokenization)
     logger.info("=== Step 1: Type-1 Detection ===")
@@ -336,11 +347,11 @@ def main() -> None:
     # Step 5: Full pipeline evaluation
     logger.info("=== Step 5: Evaluation ===")
 
-    # Ground truth from ML-evaluable set
+    # Ground truth from ML-evaluable set (use binary_label for evaluation)
     ground_truth = {}
     for _, row in ml_df.iterrows():
         pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
-        ground_truth[pair] = int(row["label"])
+        ground_truth[pair] = int(row["binary_label"])
 
     metrics = evaluate_pipeline(predictions, ground_truth)
     total_time = time.time() - total_start
