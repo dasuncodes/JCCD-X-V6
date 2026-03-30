@@ -59,3 +59,7 @@ zig-out/
 *.so
 *.dylib
 *.wasm
+
+
+# JCCD-X
+/data/*
