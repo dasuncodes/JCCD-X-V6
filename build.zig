@@ -43,6 +43,19 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(ast_stats);
 
+    // Normalization library
+    const normalization_mod = b.createModule(.{
+        .root_source_file = b.path("src/zig/preprocessing/normalization.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const normalization = b.addLibrary(.{
+        .name = "normalization",
+        .root_module = normalization_mod,
+        .linkage = .dynamic,
+    });
+    b.installArtifact(normalization);
+
     // Tests for Zig modules
     const test_step = b.step("test", "Run Zig unit tests");
 
@@ -81,4 +94,16 @@ pub fn build(b: *std.Build) void {
     });
     const run_ast_tests = b.addRunArtifact(ast_tests);
     test_step.dependOn(&run_ast_tests.step);
+
+    const normalization_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/zig/preprocessing/normalization.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const normalization_tests = b.addTest(.{
+        .name = "normalization_test",
+        .root_module = normalization_test_mod,
+    });
+    const run_normalization_tests = b.addRunArtifact(normalization_tests);
+    test_step.dependOn(&run_normalization_tests.step);
 }
