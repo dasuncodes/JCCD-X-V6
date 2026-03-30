@@ -398,7 +398,7 @@ def main() -> None:
     logger.info("Building train/test splits...")
     training, testing = build_datasets(
         validated,  # For type1, type2 (multi-class)
-        validated_for_train,  # For type3, type4, type5, nonclone (binary)
+        validated_train,  # For type3, type4, type5, nonclone (multi-class)
         test_ratio=args.test_ratio,
         seed=args.seed,
     )
