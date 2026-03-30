@@ -160,7 +160,10 @@ def balance_training_set(df: pd.DataFrame, seed: int = 42) -> pd.DataFrame:
 
 
 def build_datasets(
-    validated: dict[str, pd.DataFrame], test_ratio: float = 0.3, seed: int = 42
+    validated: dict[str, pd.DataFrame],  # For type1, type2 (multi-class labels)
+    validated_train: dict[str, pd.DataFrame],  # For type3, type4, type5, nonclone (binary labels)
+    test_ratio: float = 0.3,
+    seed: int = 42,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Construct training and testing datasets.
@@ -176,11 +179,11 @@ def build_datasets(
     - 30% of type-3+type-4 (label=3)
     - 30% of type-5+nonclone (label=0)
     """
-    # Split ABC dataset (type3, type4, type5, nonclone)
+    # Split ABC dataset (type3, type4, type5, nonclone) from validated_train
     abc_parts = []
     for key in ("type3", "type4", "type5", "nonclone"):
-        if key in validated:
-            abc_parts.append(validated[key])
+        if key in validated_train:
+            abc_parts.append(validated_train[key])
     abc = pd.concat(abc_parts, ignore_index=True)
     logger.info("ABC dataset: %d rows (type3+type4+type5+nonclone)", len(abc))
 
@@ -200,17 +203,16 @@ def build_datasets(
     train_abc = balance_training_set(train_abc, seed=seed)
 
     # Testing set: preserve multi-class labels
-    # Append type-1 and type-2 to test set (these keep their labels 1 and 2)
-    test_extra = []
+    # Start with type-3, type-4, type-5, nonclone (30% split)
+    testing_parts = [test_abc]
+
+    # Add type-1 and type-2 (100%, from validated with multi-class labels)
     for key in ("type1", "type2"):
         if key in validated:
-            test_extra.append(validated[key])
+            testing_parts.append(validated[key])
+            logger.info("Added %s to test set: %d rows", key, len(validated[key]))
 
-    if test_extra:
-        test_extra_df = pd.concat(test_extra, ignore_index=True)
-        testing = pd.concat([test_abc, test_extra_df], ignore_index=True)
-    else:
-        testing = test_abc
+    testing = pd.concat(testing_parts, ignore_index=True)
 
     logger.info("Training set: %d rows (balanced, binary)", len(train_abc))
     logger.info("Testing set: %d rows (multi-class: type-1/2/3/non)", len(testing))
@@ -389,7 +391,12 @@ def main() -> None:
 
     # 5. Split
     logger.info("Building train/test splits...")
-    training, testing = build_datasets(validated_for_train, test_ratio=args.test_ratio, seed=args.seed)
+    training, testing = build_datasets(
+        validated,  # For type1, type2 (multi-class)
+        validated_for_train,  # For type3, type4, type5, nonclone (binary)
+        test_ratio=args.test_ratio,
+        seed=args.seed,
+    )
 
     # 5. Save
     save_csv(training, args.output_dir / "training_dataset.csv")
