@@ -63,3 +63,7 @@ zig-out/
 
 # JCCD-X
 /data/*
+!/data/*/.gitkeep
+artifacts/evaluation/*
+artifacts/models/*
+!artifacts/*/.gitkeep
