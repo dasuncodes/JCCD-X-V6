@@ -301,11 +301,16 @@ def main() -> None:
         X_train, y_train, feature_cols, args.model_dir, args.eval_dir, args.seed,
     )
 
-    # Test set evaluation (only on binary-labeled samples)
-    logger.info("Evaluating on test set...")
-    binary_mask = (y_test >= 0)
+    # Test set evaluation (only on Type-3 and Non-clones for binary classification)
+    # Filter: label=0 (Non-clones) and label=3 (Type-3 clones)
+    logger.info("Evaluating on test set (Type-3 vs Non-clone only)...")
+    binary_mask = y_test.isin([0, 3])
     X_test_bin = X_test[binary_mask]
     y_test_bin = y_test[binary_mask]
+
+    # Convert label=3 to label=1 for binary classification
+    y_test_bin = y_test_bin.apply(lambda x: 1 if x == 3 else 0).values
+
     y_pred = best_model.predict(X_test_bin)
     y_proba = None
     if hasattr(best_model, "predict_proba"):
@@ -322,7 +327,7 @@ def main() -> None:
     plots_dir = args.eval_dir / "plots" / "training"
     generate_training_plots(
         all_results, feature_importance, best_model, best_name,
-        X_test_bin, y_test_bin, feature_cols, plots_dir,
+        X_test_bin, y_test_bin.astype(np.int32), feature_cols, plots_dir,
     )
     logger.info("Plots saved to %s", plots_dir)
 
