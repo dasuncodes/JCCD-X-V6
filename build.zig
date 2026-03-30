@@ -56,6 +56,19 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(normalization);
 
+    // Tokenizer library
+    const tokenizer_mod = b.createModule(.{
+        .root_source_file = b.path("src/zig/tokenization/tokenizer.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const tokenizer = b.addLibrary(.{
+        .name = "tokenizer",
+        .root_module = tokenizer_mod,
+        .linkage = .dynamic,
+    });
+    b.installArtifact(tokenizer);
+
     // Tests for Zig modules
     const test_step = b.step("test", "Run Zig unit tests");
 
@@ -106,4 +119,16 @@ pub fn build(b: *std.Build) void {
     });
     const run_normalization_tests = b.addRunArtifact(normalization_tests);
     test_step.dependOn(&run_normalization_tests.step);
+
+    const tokenizer_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/zig/tokenization/tokenizer.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const tokenizer_tests = b.addTest(.{
+        .name = "tokenizer_test",
+        .root_module = tokenizer_test_mod,
+    });
+    const run_tokenizer_tests = b.addRunArtifact(tokenizer_tests);
+    test_step.dependOn(&run_tokenizer_tests.step);
 }
