@@ -161,7 +161,7 @@ def balance_training_set(df: pd.DataFrame, seed: int = 42) -> pd.DataFrame:
 
 def build_datasets(
     validated: dict[str, pd.DataFrame],  # For type1, type2 (multi-class labels)
-    validated_train: dict[str, pd.DataFrame],  # For type3, type4, type5, nonclone (binary labels)
+    validated_train: dict[str, pd.DataFrame],  # For type3, type4, type5, nonclone (multi-class labels)
     test_ratio: float = 0.3,
     seed: int = 42,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -169,7 +169,7 @@ def build_datasets(
     Construct training and testing datasets.
 
     Training set (binary, balanced):
-    - 70% of type3+type4 (label=1) and type5+nonclone (label=0)
+    - 70% of type3+type4 (label→1) and type5+nonclone (label→0)
     - Balanced classes
     - Type-1 and Type-2 excluded
 
@@ -180,6 +180,7 @@ def build_datasets(
     - 30% of type-5+nonclone (label=0)
     """
     # Split ABC dataset (type3, type4, type5, nonclone) from validated_train
+    # These have multi-class labels (0 and 3)
     abc_parts = []
     for key in ("type3", "type4", "type5", "nonclone"):
         if key in validated_train:
@@ -187,26 +188,29 @@ def build_datasets(
     abc = pd.concat(abc_parts, ignore_index=True)
     logger.info("ABC dataset: %d rows (type3+type4+type5+nonclone)", len(abc))
 
-    # Create binary labels for stratified split
+    # Create binary labels for stratified split (don't modify original label column)
     abc_binary = abc.copy()
-    abc_binary["binary_label"] = abc_binary["label"].apply(lambda x: 1 if x == 3 else 0)
+    abc_binary["train_label"] = abc_binary["label"].apply(lambda x: 1 if x == 3 else 0)
 
     train_abc, test_abc = train_test_split(
-        abc_binary, test_size=test_ratio, random_state=seed, stratify=abc_binary["binary_label"]
+        abc_binary, test_size=test_ratio, random_state=seed, stratify=abc_binary["train_label"]
     )
 
-    # Drop the temporary binary_label column
-    train_abc = train_abc.drop(columns=["binary_label"]).reset_index(drop=True)
-    test_abc = test_abc.drop(columns=["binary_label"]).reset_index(drop=True)
+    # Drop the temporary train_label column, keep original multi-class labels
+    train_abc = train_abc.drop(columns=["train_label"]).reset_index(drop=True)
+    test_abc = test_abc.drop(columns=["train_label"]).reset_index(drop=True)
+
+    # Convert training set to binary labels (0 and 1)
+    train_abc["label"] = train_abc["label"].apply(lambda x: 1 if x == 3 else 0)
 
     # Balance the training set (binary: Type-3 vs Non-clone)
     train_abc = balance_training_set(train_abc, seed=seed)
 
     # Testing set: preserve multi-class labels
-    # Start with type-3, type-4, type-5, nonclone (30% split)
+    # Start with type-3, type-4, type-5, nonclone (30% split, labels 0 and 3)
     testing_parts = [test_abc]
 
-    # Add type-1 and type-2 (100%, from validated with multi-class labels)
+    # Add type-1 and type-2 (100%, from validated with multi-class labels 1 and 2)
     for key in ("type1", "type2"):
         if key in validated:
             testing_parts.append(validated[key])
@@ -378,16 +382,17 @@ def main() -> None:
     logger.info("Validating source files...")
     validated, removal_stats = validate_source_files(labelled, args.source_dir)
 
-    # 4. Re-label for training (binary)
+    # 4. Re-label for training (binary) - ONLY for training set
     logger.info("Re-labeling for training (binary)...")
-    validated_train = assign_training_labels(datasets)
-    _, removal_stats_train = validate_source_files(validated_train, args.source_dir)
-
-    # Use validated for testing, validated_train for training
-    validated_for_train = {}
+    # For training, we need binary labels but for testing we need multi-class
+    # So we create a separate copy for training with binary labels
+    validated_train = {}
     for key in ("type3", "type4", "type5", "nonclone"):
-        if key in validated_train:
-            validated_for_train[key] = validated_train[key]
+        if key in validated:
+            df = validated[key].copy()
+            # Keep original multi-class labels for test set
+            # Training set will use binary labels via the split logic
+            validated_train[key] = df
 
     # 5. Split
     logger.info("Building train/test splits...")
