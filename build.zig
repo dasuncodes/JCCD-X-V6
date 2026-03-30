@@ -1,0 +1,84 @@
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    // Shingling library
+    const shingling_mod = b.createModule(.{
+        .root_source_file = b.path("src/zig/shingling/shingling.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const shingling = b.addLibrary(.{
+        .name = "shingling",
+        .root_module = shingling_mod,
+        .linkage = .dynamic,
+    });
+    b.installArtifact(shingling);
+
+    // LSH / MinHash library
+    const minhash_mod = b.createModule(.{
+        .root_source_file = b.path("src/zig/lsh/minhash.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const minhash = b.addLibrary(.{
+        .name = "minhash",
+        .root_module = minhash_mod,
+        .linkage = .dynamic,
+    });
+    b.installArtifact(minhash);
+
+    // AST statistics library
+    const ast_stats_mod = b.createModule(.{
+        .root_source_file = b.path("src/zig/ast_stats/ast_stats.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const ast_stats = b.addLibrary(.{
+        .name = "ast_stats",
+        .root_module = ast_stats_mod,
+        .linkage = .dynamic,
+    });
+    b.installArtifact(ast_stats);
+
+    // Tests for Zig modules
+    const test_step = b.step("test", "Run Zig unit tests");
+
+    const shingling_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/zig/shingling/shingling.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const shingling_tests = b.addTest(.{
+        .name = "shingling_test",
+        .root_module = shingling_test_mod,
+    });
+    const run_shingling_tests = b.addRunArtifact(shingling_tests);
+    test_step.dependOn(&run_shingling_tests.step);
+
+    const minhash_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/zig/lsh/minhash.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const minhash_tests = b.addTest(.{
+        .name = "minhash_test",
+        .root_module = minhash_test_mod,
+    });
+    const run_minhash_tests = b.addRunArtifact(minhash_tests);
+    test_step.dependOn(&run_minhash_tests.step);
+
+    const ast_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/zig/ast_stats/ast_stats.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const ast_tests = b.addTest(.{
+        .name = "ast_stats_test",
+        .root_module = ast_test_mod,
+    });
+    const run_ast_tests = b.addRunArtifact(ast_tests);
+    test_step.dependOn(&run_ast_tests.step);
+}
