@@ -14,8 +14,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from src.bindings.features import FeaturesLib
-from src.python.feature_engineering.features import prepare_flat_arrays
 from src.python.utils.io import save_json
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -251,20 +249,28 @@ def main() -> None:
                 100 * (1 - len(lsh_candidates) / max(len(ml_pair_set), 1)),
                 step2_time)
 
-    # Step 3: Compute features for LSH candidates
-    logger.info("=== Step 3: Feature Computation ===")
+    # Step 3: Load features for LSH candidates
+    logger.info("=== Step 3: Feature Loading ===")
     step3_start = time.time()
-
-    prepare_flat_arrays(token_data)
-    FeaturesLib()
 
     # For the pipeline, use the pre-computed features from test_features.csv
     features_path = args.intermediate_dir / "features" / "test_features.csv"
     if features_path.exists():
-        feat_df = pd.read_csv(features_path)
-        feature_cols = [c for c in feat_df.columns if c not in ("label", "id1", "id2")]
-        logger.info("Using pre-computed features: %d pairs, %d features",
-                     len(feat_df), len(feature_cols))
+        feat_df_full = pd.read_csv(features_path)
+        feature_cols = [c for c in feat_df_full.columns if c not in ("label", "id1", "id2")]
+        logger.info("Pre-computed features: %d pairs, %d features",
+                     len(feat_df_full), len(feature_cols))
+
+        # Filter to LSH candidates only — this is the actual LSH reduction
+        feat_df_full["pair_key"] = feat_df_full.apply(
+            lambda r: (min(r["id1"], r["id2"]), max(r["id1"], r["id2"])), axis=1
+        )
+        lsh_mask = feat_df_full["pair_key"].isin(lsh_candidates)
+        feat_df = feat_df_full[lsh_mask].reset_index(drop=True)
+        non_candidates = feat_df_full[~lsh_mask].reset_index(drop=True)
+        logger.info("LSH filtered: %d candidate pairs (from %d total, %.1f%% reduction)",
+                     len(feat_df), len(feat_df_full),
+                     100 * len(non_candidates) / max(len(feat_df_full), 1))
     else:
         logger.error("Run feature engineering first")
         return
@@ -281,10 +287,15 @@ def main() -> None:
     step4_time = time.time() - step4_start
 
     # Build predictions dictionary
+    # LSH candidates: use ML predictions
     predictions = {}
     for i, row in feat_df.iterrows():
         pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
         predictions[pair] = int(y_pred[i])
+    # Non-candidates: predicted as non-clone (label 0)
+    for _, row in non_candidates.iterrows():
+        pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
+        predictions[pair] = 0
 
     # Step 5: Full pipeline evaluation
     logger.info("=== Step 5: Evaluation ===")
