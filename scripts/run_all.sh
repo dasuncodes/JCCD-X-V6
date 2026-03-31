@@ -76,55 +76,49 @@ bash scripts/run_pipeline.sh
 echo "=========================================="
 echo "  Step 6.5: Ablation Study (Selected Features)"
 echo "=========================================="
-    bash scripts/run_ablation.sh
+bash scripts/run_ablation.sh
+
+# Step 7: Comprehensive Evaluation (Core Metrics & Plots)
+echo "=========================================="
+echo "  Step 7: Comprehensive Evaluation"
+echo "=========================================="
+bash scripts/run_comprehensive_evaluation.sh
 
 
-# Optional Analysis Modules (Phases 7-11)
+# Optional Analysis Modules (Phases 8-12)
 if [[ "$RUN_ANALYSIS" == "true" ]]; then
     echo "=========================================="
     echo "  Running Analysis Modules"
     echo "=========================================="
     echo ""
 
-# Moved earlier (RFE after training, ablation after pipeline)
-# Moved earlier (RFE after training, ablation after pipeline)
-# Moved earlier (RFE after training, ablation after pipeline)
-# Moved earlier (RFE after training, ablation after pipeline)
-# Moved earlier (RFE after training, ablation after pipeline)
-# Moved earlier (RFE after training, ablation after pipeline)
-# Moved earlier (RFE after training, ablation after pipeline)
-# Moved earlier (RFE after training, ablation after pipeline)
-# Moved earlier (RFE after training, ablation after pipeline)
-# Moved earlier (RFE after training, ablation after pipeline)
-# Moved earlier (RFE after training, ablation after pipeline)
-
-    # Phase 7: LSH Parameter Sweep
+    # Phase 8: LSH Parameter Sweep
     echo "=========================================="
-    echo "  Phase 7: LSH Parameter Sweep"
+    echo "  Phase 8: LSH Parameter Sweep"
     echo "=========================================="
     bash scripts/run_lsh_sweep.sh
 
-    # Phase 8: CV Stability Analysis
+    # Phase 9: CV Stability Analysis
     echo "=========================================="
-    echo "  Phase 8: CV Stability Analysis"
+    echo "  Phase 9: CV Stability Analysis"
     echo "=========================================="
     bash scripts/run_stability.sh
 
-    # Phase 9: Probability Calibration
+    # Phase 10: Probability Calibration
     echo "=========================================="
-    echo "  Phase 9: Probability Calibration"
+    echo "  Phase 10: Probability Calibration"
     echo "=========================================="
     bash scripts/run_calibration.sh
 
-    # Phase 10: Sensitivity Analysis
+    # Phase 11: Sensitivity Analysis
     echo "=========================================="
-    echo "  Phase 10: Sensitivity Analysis"
+    echo "  Phase 11: Sensitivity Analysis"
     echo "=========================================="
     bash scripts/run_sensitivity.sh
 
-    # Phase 11: Memory Usage Profiling
+    # Phase 12: Memory Usage Profiling
     echo "=========================================="
-    echo "  Phase 11: Memory Usage Profiling"
+    echo "  Phase 12: Memory Usage Profiling"
     echo "=========================================="
     bash scripts/run_memory_profile.sh
 
@@ -142,6 +136,7 @@ echo "Results:"
 echo "  - Metrics: artifacts/evaluation/*.json"
 echo "  - Models:  artifacts/models/"
 echo "  - Plots:   artifacts/evaluation/plots/"
+echo "  - Comprehensive Eval: artifacts/evaluation_comprehensive/"
 echo ""
 echo "To run with analysis modules:"
 echo "  bash scripts/run_all.sh --with-analysis"
