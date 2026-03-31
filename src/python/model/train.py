@@ -304,12 +304,12 @@ def main() -> None:
     # Test set evaluation (only on Type-3 and Non-clones for binary classification)
     # Filter: label=0 (Non-clones) and label=3 (Type-3 clones)
     logger.info("Evaluating on test set (Type-3 vs Non-clone only)...")
-    binary_mask = y_test.isin([0, 3])
+    binary_mask = np.isin(y_test, [0, 3])
     X_test_bin = X_test[binary_mask]
     y_test_bin = y_test[binary_mask]
 
     # Convert label=3 to label=1 for binary classification
-    y_test_bin = y_test_bin.apply(lambda x: 1 if x == 3 else 0).values
+    y_test_bin = np.where(y_test_bin == 3, 1, 0)
 
     y_pred = best_model.predict(X_test_bin)
     y_proba = None
