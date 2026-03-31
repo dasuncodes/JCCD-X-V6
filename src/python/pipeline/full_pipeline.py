@@ -190,7 +190,7 @@ def lsh_candidate_pairs(
     # Step 3: LSH bucket assignment
     t0 = time.time()
     # bucket_key -> list of file_ids
-    buckets: dict[tuple[int, int], list] = {}
+    buckets: dict[int, list] = {}
     # file_id -> list of bucket_keys (for intersection)
     file_to_buckets: dict[int, list] = {fid: [] for fid in valid_ids}
 
@@ -198,7 +198,7 @@ def lsh_candidate_pairs(
     bucket_ids = minhash_lib.lsh_buckets_batch(signatures, bands, rows_per_band)
     for i, fid in enumerate(valid_ids):
         for b in range(bands):
-            bucket_key = (b, int(bucket_ids[i, b]))
+            bucket_key = (b << 64) | int(bucket_ids[i, b])
             if bucket_key not in buckets:
                 buckets[bucket_key] = []
             buckets[bucket_key].append(fid)
@@ -348,8 +348,8 @@ def main() -> None:
     parser.add_argument("--intermediate-dir", type=Path, default=Path("data/intermediate"))
     parser.add_argument("--model-dir", type=Path, default=Path("artifacts/models"))
     parser.add_argument("--eval-dir", type=Path, default=Path("artifacts/evaluation"))
-    parser.add_argument("--lsh-hashes", type=int, default=192)
-    parser.add_argument("--lsh-bands", type=int, default=32)
+    parser.add_argument("--lsh-hashes", type=int, default=36)
+    parser.add_argument("--lsh-bands", type=int, default=12)
     parser.add_argument("--shingle-k", type=int, default=3)
     parser.add_argument(
         "--skip-lsh",
@@ -358,7 +358,7 @@ def main() -> None:
         help="Skip LSH filtering and use all pairs",
     )
     parser.add_argument(
-        "--threshold", type=float, default=0.5, help="Classification threshold for clone detection"
+        "--threshold", type=float, default=0.30, help="Classification threshold for clone detection"
     )
     parser.add_argument(
         "--sim-threshold",
