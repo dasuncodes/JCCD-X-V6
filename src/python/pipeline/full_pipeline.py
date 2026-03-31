@@ -644,10 +644,21 @@ def main() -> None:
     features_path = args.intermediate_dir / "features" / "test_features.csv"
     if features_path.exists():
         feat_df_full = pd.read_csv(features_path)
-        feature_cols = [c for c in feat_df_full.columns if c not in ("label", "id1", "id2")]
+        all_feature_cols = [c for c in feat_df_full.columns if c not in ("label", "id1", "id2")]
         logger.info(
-            "Pre-computed features: %d pairs, %d features", len(feat_df_full), len(feature_cols)
+            "Pre-computed features: %d pairs, %d features", len(feat_df_full), len(all_feature_cols)
         )
+
+        # Check if model was trained with RFE-selected features
+        selected_features_path = args.model_dir / "selected_features.json"
+        if selected_features_path.exists():
+            import json
+            with open(selected_features_path, 'r') as f:
+                feature_cols = json.load(f)
+            logger.info("Using RFE-selected features: %d features", len(feature_cols))
+        else:
+            feature_cols = all_feature_cols
+            logger.info("Using all features: %d features", len(feature_cols))
 
         # Filter to LSH candidates only — this is the actual LSH reduction
         feat_df_full["pair_key"] = feat_df_full.apply(
