@@ -155,62 +155,162 @@ def lsh_candidate_pairs(
     fid_to_index = {fid: i for i, fid in enumerate(valid_ids)}
     logger.info("LSH: processing %d files", len(valid_ids))
 
-    # Step 1: Compute shingles for all files using Zig batch
-    all_token_seqs = []
-    token_counts_list = []
-    for fid in valid_ids:
-        tokens = token_data[fid]["token_ids"]
-        all_token_seqs.extend(tokens)
-        token_counts_list.append(len(tokens))
+    # ---------------------------------------------------------------------------
+    # Caching
+    # ---------------------------------------------------------------------------
+    import hashlib
+    import pickle
+    from pathlib import Path
 
-    all_tokens_arr = np.array(all_token_seqs, dtype=np.uint32)
-    token_counts_arr = np.array(token_counts_list, dtype=np.uintp)
+    def compute_fingerprint(token_data, valid_ids):
+        """Compute a stable fingerprint of token data for caching."""
+        data = []
+        for fid in sorted(valid_ids):
+            token_ids = token_data[fid]["token_ids"]
+            # Use first 10 tokens and length to keep fingerprint small
+            snippet = (fid, len(token_ids), tuple(token_ids[:10]))
+            data.append(snippet)
+        return hashlib.sha256(pickle.dumps(data)).hexdigest()
 
-    t0 = time.time()
-    all_shingles, shingle_offsets = shingling_lib.compute_shingles_batch(
-        all_tokens_arr,
-        token_counts_arr,
-        k,
-    )
-    logger.info("LSH: shingling done in %.2fs (%d shingles)", time.time() - t0, len(all_shingles))
+    cache_dir = Path("artifacts/cache/lsh")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    fingerprint = compute_fingerprint(token_data, valid_ids)
+    cache_key = f"lsh_{num_hashes}_{bands}_{k}_{fingerprint}"
+    cache_path = cache_dir / f"{cache_key}.pkl"
+    cache_hit = False
+    all_shingles = None
+    shingle_offsets = None
+    signatures = None
+    bucket_ids = None
+    if cache_path.exists():
+        try:
+            with open(cache_path, "rb") as f:
+                cache_data = pickle.load(f)
+            # Validate cached data matches current parameters
+            if (
+                cache_data.get("num_hashes") == num_hashes
+                and cache_data.get("bands") == bands
+                and cache_data.get("rows_per_band") == rows_per_band
+                and cache_data.get("k") == k
+                and cache_data.get("fingerprint") == fingerprint
+            ):
+                # Load cached arrays
+                all_shingles = cache_data["all_shingles"]
+                shingle_offsets = cache_data["shingle_offsets"]
+                signatures = cache_data["signatures"]
+                bucket_ids = cache_data["bucket_ids"]
+                # Ensure lengths match
+                if len(bucket_ids) == len(valid_ids) and bucket_ids.shape[1] == bands:
+                    cache_hit = True
+                    logger.info("LSH: cache hit (%s)", cache_path.name)
+                else:
+                    logger.warning("LSH: cache size mismatch, recomputing")
+            else:
+                logger.info("LSH: cache parameters mismatch, recomputing")
+        except Exception as e:
+            logger.warning("LSH: cache load failed: %s", e)
 
-    # Step 2: Compute MinHash signatures for each file (batch)
-    t0 = time.time()
-    # Compute shingle counts per file
-    shingle_counts = np.diff(shingle_offsets, append=len(all_shingles))
-    # Batch compute signatures
-    signatures = minhash_lib.minhash_signature_batch_flat(
-        all_shingles,
-        shingle_offsets,
-        shingle_counts,
-        num_hashes,
-    )
-    logger.info("LSH: minhash done in %.2fs", time.time() - t0)
+    if not cache_hit:
+        logger.info("LSH: cache miss, computing from scratch")
 
-    # Step 3: LSH bucket assignment
-    t0 = time.time()
-    # bucket_key -> list of file_ids
-    buckets: dict[int, list] = {}
-    # file_id -> list of bucket_keys (for intersection)
-    file_to_buckets: dict[int, list] = {fid: [] for fid in valid_ids}
+    if not cache_hit:
+        # Step 1: Compute shingles for all files using Zig batch
+        all_token_seqs = []
+        token_counts_list = []
+        for fid in valid_ids:
+            tokens = token_data[fid]["token_ids"]
+            all_token_seqs.extend(tokens)
+            token_counts_list.append(len(tokens))
 
-    # Batch compute bucket IDs for all files
-    bucket_ids = minhash_lib.lsh_buckets_batch(signatures, bands, rows_per_band)
-    for i, fid in enumerate(valid_ids):
-        for b in range(bands):
-            bucket_key = (b << 64) | int(bucket_ids[i, b])
-            if bucket_key not in buckets:
-                buckets[bucket_key] = []
-            buckets[bucket_key].append(fid)
-            file_to_buckets[fid].append(bucket_key)
-    # Precompute bucket sets for efficient intersection
-    file_to_bucket_sets = {fid: set(keys) for fid, keys in file_to_buckets.items()}
-    bucket_sets_list = [set() for _ in range(len(valid_ids))]
-    for fid, s in file_to_bucket_sets.items():
-        idx = fid_to_index[fid]
-        bucket_sets_list[idx] = s
+        all_tokens_arr = np.array(all_token_seqs, dtype=np.uint32)
+        token_counts_arr = np.array(token_counts_list, dtype=np.uintp)
 
-    logger.info("LSH: bucket assignment done in %.2fs", time.time() - t0)
+        t0 = time.time()
+        all_shingles, shingle_offsets = shingling_lib.compute_shingles_batch(
+            all_tokens_arr,
+            token_counts_arr,
+            k,
+        )
+        logger.info(
+            "LSH: shingling done in %.2fs (%d shingles)", time.time() - t0, len(all_shingles)
+        )
+
+        # Step 2: Compute MinHash signatures for each file (batch)
+        t0 = time.time()
+        # Compute shingle counts per file
+        shingle_counts = np.diff(shingle_offsets, append=len(all_shingles))
+        # Batch compute signatures
+        signatures = minhash_lib.minhash_signature_batch_flat(
+            all_shingles,
+            shingle_offsets,
+            shingle_counts,
+            num_hashes,
+        )
+        logger.info("LSH: minhash done in %.2fs", time.time() - t0)
+
+        # Step 3: LSH bucket assignment
+        t0 = time.time()
+        # bucket_key -> list of file_ids
+        buckets = {}
+        # file_id -> list of bucket_keys (for intersection)
+        file_to_buckets = {fid: [] for fid in valid_ids}
+
+        # Batch compute bucket IDs for all files
+        bucket_ids = minhash_lib.lsh_buckets_batch(signatures, bands, rows_per_band)
+        for i, fid in enumerate(valid_ids):
+            for b in range(bands):
+                bucket_key = (b << 64) | int(bucket_ids[i, b])
+                if bucket_key not in buckets:
+                    buckets[bucket_key] = []
+                buckets[bucket_key].append(fid)
+                file_to_buckets[fid].append(bucket_key)
+        # Precompute bucket sets for efficient intersection
+        file_to_bucket_sets = {fid: set(keys) for fid, keys in file_to_buckets.items()}
+        bucket_sets_list = [set() for _ in range(len(valid_ids))]
+        for fid, s in file_to_bucket_sets.items():
+            idx = fid_to_index[fid]
+            bucket_sets_list[idx] = s
+
+        logger.info("LSH: bucket assignment done in %.2fs", time.time() - t0)
+
+        # Save to cache
+        cache_data = {
+            "num_hashes": num_hashes,
+            "bands": bands,
+            "rows_per_band": rows_per_band,
+            "k": k,
+            "fingerprint": fingerprint,
+            "all_shingles": all_shingles,
+            "shingle_offsets": shingle_offsets,
+            "signatures": signatures,
+            "bucket_ids": bucket_ids,
+        }
+        try:
+            with open(cache_path, "wb") as f:
+                pickle.dump(cache_data, f)
+            logger.info("LSH: saved cache to %s", cache_path.name)
+        except Exception as e:
+            logger.warning("LSH: cache save failed: %s", e)
+    else:
+        # Cache hit: we already have all_shingles, shingle_offsets, signatures, bucket_ids
+        # Compute file_to_buckets and bucket_sets_list from cached bucket_ids
+        # bucket_key -> list of file_ids
+        buckets = {}
+        # file_id -> list of bucket_keys (for intersection)
+        file_to_buckets = {fid: [] for fid in valid_ids}
+        for i, fid in enumerate(valid_ids):
+            for b in range(bands):
+                bucket_key = (b << 64) | int(bucket_ids[i, b])
+                if bucket_key not in buckets:
+                    buckets[bucket_key] = []
+                buckets[bucket_key].append(fid)
+                file_to_buckets[fid].append(bucket_key)
+        # Precompute bucket sets for efficient intersection
+        file_to_bucket_sets = {fid: set(keys) for fid, keys in file_to_buckets.items()}
+        bucket_sets_list = [set() for _ in range(len(valid_ids))]
+        for fid, s in file_to_bucket_sets.items():
+            idx = fid_to_index[fid]
+            bucket_sets_list[idx] = s
 
     # Step 4: Find candidates among ml_pair_set
     t0 = time.time()
