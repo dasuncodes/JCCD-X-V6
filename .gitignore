@@ -66,4 +66,6 @@ zig-out/
 !/data/*/.gitkeep
 artifacts/evaluation/*
 artifacts/models/*
+artifacts/cache/*
 !artifacts/*/.gitkeep
+.qwen

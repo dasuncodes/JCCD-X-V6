@@ -1,0 +1,66 @@
+[
+  {
+    "precision": 0.9041,
+    "recall": 0.7188,
+    "lsh_reduction": 71.0,
+    "time": 53.4,
+    "hashes": 32,
+    "bands": 8
+  },
+  {
+    "precision": 0.9039,
+    "recall": 0.7245,
+    "lsh_reduction": 70.8,
+    "time": 59.4,
+    "hashes": 36,
+    "bands": 9
+  },
+  {
+    "precision": 0.8804,
+    "recall": 0.8984,
+    "lsh_reduction": 51.0,
+    "time": 52.8,
+    "hashes": 36,
+    "bands": 12
+  },
+  {
+    "precision": 0.9302,
+    "recall": 0.5729,
+    "lsh_reduction": 81.3,
+    "time": 49.2,
+    "hashes": 40,
+    "bands": 8
+  },
+  {
+    "precision": 0.9032,
+    "recall": 0.7395,
+    "lsh_reduction": 70.0,
+    "time": 50.8,
+    "hashes": 40,
+    "bands": 10
+  },
+  {
+    "precision": 0.8985,
+    "recall": 0.7966,
+    "lsh_reduction": 67.1,
+    "time": 48.9,
+    "hashes": 44,
+    "bands": 11
+  },
+  {
+    "precision": 0.9356,
+    "recall": 0.5251,
+    "lsh_reduction": 84.6,
+    "time": 51.6,
+    "hashes": 48,
+    "bands": 8
+  },
+  {
+    "precision": 0.8969,
+    "recall": 0.8087,
+    "lsh_reduction": 66.2,
+    "time": 48.8,
+    "hashes": 48,
+    "bands": 12
+  }
+]
