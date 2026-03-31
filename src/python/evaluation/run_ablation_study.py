@@ -428,7 +428,7 @@ def run_lsh_ablation(
 # Visualization Functions
 # ---------------------------------------------------------------------------
 
-def plot_individual_feature_ablation(results: dict, output_path: Path):
+def plot_individual_feature_ablation(results: dict, output_path: Path, save_individual: bool = True):
     """Create individual feature ablation comparison plots."""
 
     configs = {k: v for k, v in results["configurations"].items() if k != "full"}
@@ -439,42 +439,59 @@ def plot_individual_feature_ablation(results: dict, output_path: Path):
 
     # Sort by delta_f1 (most impactful first)
     sorted_idx = np.argsort(delta_f1_pct)
-    feature_names = [feature_names[i] for i in sorted_idx]
-    f1_means = [f1_means[i] for i in sorted_idx]
-    f1_stds = [f1_stds[i] for i in sorted_idx]
-    delta_f1_pct = [delta_f1_pct[i] for i in sorted_idx]
+    feature_names_sorted = [feature_names[i] for i in sorted_idx]
+    f1_means_sorted = [f1_means[i] for i in sorted_idx]
+    f1_stds_sorted = [f1_stds[i] for i in sorted_idx]
+    delta_f1_pct_sorted = [delta_f1_pct[i] for i in sorted_idx]
 
     # Get baseline
     baseline_f1 = results["configurations"]["full"]["f1_mean"]
 
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    # Create output directory for individual plots
+    individual_plots_dir = output_path.parent / "individual_feature_plots"
+    if save_individual:
+        individual_plots_dir.mkdir(exist_ok=True)
 
     # Plot 1: F1 Score Comparison (sorted)
-    ax1 = axes[0, 0]
-    colors = plt.cm.RdYlGn(np.linspace(0.2, 0.8, len(feature_names)))
-    bars1 = ax1.barh(feature_names, f1_means, xerr=f1_stds, capsize=3, color=colors)
+    fig1, ax1 = plt.subplots(figsize=(10, 8))
+    colors = plt.cm.RdYlGn(np.linspace(0.2, 0.8, len(feature_names_sorted)))
+    bars1 = ax1.barh(feature_names_sorted, f1_means_sorted, xerr=f1_stds_sorted, capsize=3, color=colors)
     ax1.axvline(x=baseline_f1, color='red', linestyle='--', linewidth=2, label=f'Baseline: {baseline_f1:.4f}')
     ax1.set_xlabel('F1 Score', fontsize=12)
     ax1.set_title('F1 Score After Removing Each Feature', fontsize=14, fontweight='bold')
     ax1.legend()
     ax1.grid(axis='x', alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_path.parent / 'individual_f1_comparison.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    if save_individual:
+        plt.savefig(individual_plots_dir / '01_f1_score_comparison.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    logger.info(f"Saved individual F1 comparison plot")
 
     # Plot 2: F1 Degradation (sorted by impact)
-    ax2 = axes[0, 1]
-    colors2 = plt.cm.RdYlGn(np.linspace(0, 1, len(delta_f1_pct)))
-    bars2 = ax2.barh(feature_names, delta_f1_pct, color=colors2)
+    fig2, ax2 = plt.subplots(figsize=(10, 8))
+    colors2 = plt.cm.RdYlGn(np.linspace(0, 1, len(delta_f1_pct_sorted)))
+    bars2 = ax2.barh(feature_names_sorted, delta_f1_pct_sorted, color=colors2)
     ax2.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
     ax2.set_xlabel('Δ F1 (%)', fontsize=12)
     ax2.set_title('F1 Score Degradation by Feature', fontsize=14, fontweight='bold')
     ax2.grid(axis='x', alpha=0.3)
 
     # Add value labels
-    for bar, val in zip(bars2, delta_f1_pct):
+    for bar, val in zip(bars2, delta_f1_pct_sorted):
         ax2.text(bar.get_width() + (0.3 if val > 0 else -0.5), bar.get_y() + bar.get_height()/2,
                 f'{val:.2f}%', ha='left' if val > 0 else 'right', va='center', fontsize=10, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(output_path.parent / 'individual_f1_degradation.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    if save_individual:
+        plt.savefig(individual_plots_dir / '02_f1_degradation.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    logger.info(f"Saved individual F1 degradation plot")
 
     # Plot 3: Feature Importance Ranking
-    ax3 = axes[1, 0]
+    fig3, ax3 = plt.subplots(figsize=(10, 8))
     ranking = results.get("feature_importance_ranking", [])
     if ranking:
         ranks = [r["rank"] for r in ranking]
@@ -489,11 +506,18 @@ def plot_individual_feature_ablation(results: dict, output_path: Path):
         ax3.set_xlabel('Δ F1 (%)', fontsize=12)
         ax3.set_title('Feature Importance Ranking (Most to Least Important)', fontsize=14, fontweight='bold')
         ax3.grid(axis='x', alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(output_path.parent / 'individual_feature_ranking.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        if save_individual:
+            plt.savefig(individual_plots_dir / '03_feature_ranking.png', dpi=300, bbox_inches='tight')
+            plt.close()
+        logger.info(f"Saved individual feature ranking plot")
 
     # Plot 4: Baseline vs Each Removal
-    ax4 = axes[1, 1]
-    all_f1 = [baseline_f1] + f1_means
-    all_labels = ['Baseline'] + feature_names
+    fig4, ax4 = plt.subplots(figsize=(12, 8))
+    all_f1 = [baseline_f1] + f1_means_sorted
+    all_labels = ['Baseline'] + feature_names_sorted
     x = np.arange(len(all_labels))
 
     bars4 = ax4.bar(x, all_f1, color=['red'] + list(colors), edgecolor='black', linewidth=0.5)
@@ -505,6 +529,69 @@ def plot_individual_feature_ablation(results: dict, output_path: Path):
     ax4.grid(axis='y', alpha=0.3)
 
     # Add value labels
+    for bar, val in zip(bars4, all_f1):
+        ax4.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                f'{val:.4f}', ha='center', va='bottom', fontsize=9)
+    plt.tight_layout()
+    plt.savefig(output_path.parent / 'individual_baseline_comparison.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    if save_individual:
+        plt.savefig(individual_plots_dir / '04_baseline_comparison.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    logger.info(f"Saved individual baseline comparison plot")
+
+    # Combined 4-panel figure
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+
+    # Plot 1
+    ax1 = axes[0, 0]
+    colors = plt.cm.RdYlGn(np.linspace(0.2, 0.8, len(feature_names_sorted)))
+    bars1 = ax1.barh(feature_names_sorted, f1_means_sorted, xerr=f1_stds_sorted, capsize=3, color=colors)
+    ax1.axvline(x=baseline_f1, color='red', linestyle='--', linewidth=2, label=f'Baseline: {baseline_f1:.4f}')
+    ax1.set_xlabel('F1 Score', fontsize=12)
+    ax1.set_title('F1 Score After Removing Each Feature', fontsize=14, fontweight='bold')
+    ax1.legend()
+    ax1.grid(axis='x', alpha=0.3)
+
+    # Plot 2
+    ax2 = axes[0, 1]
+    colors2 = plt.cm.RdYlGn(np.linspace(0, 1, len(delta_f1_pct_sorted)))
+    bars2 = ax2.barh(feature_names_sorted, delta_f1_pct_sorted, color=colors2)
+    ax2.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
+    ax2.set_xlabel('Δ F1 (%)', fontsize=12)
+    ax2.set_title('F1 Score Degradation by Feature', fontsize=14, fontweight='bold')
+    ax2.grid(axis='x', alpha=0.3)
+    for bar, val in zip(bars2, delta_f1_pct_sorted):
+        ax2.text(bar.get_width() + (0.3 if val > 0 else -0.5), bar.get_y() + bar.get_height()/2,
+                f'{val:.2f}%', ha='left' if val > 0 else 'right', va='center', fontsize=10, fontweight='bold')
+
+    # Plot 3
+    ax3 = axes[1, 0]
+    if ranking:
+        ranks = [r["rank"] for r in ranking]
+        features_rank = [r["feature"] for r in ranking]
+        delta_vals = [r["delta_f1_pct"] for r in ranking]
+        y_pos = np.arange(len(features_rank))
+        colors3 = plt.cm.RdYlGn(1 - np.array(ranks) / max(ranks))
+        ax3.barh(y_pos, delta_vals, color=colors3)
+        ax3.set_yticks(y_pos)
+        ax3.set_yticklabels(features_rank)
+        ax3.set_xlabel('Δ F1 (%)', fontsize=12)
+        ax3.set_title('Feature Importance Ranking (Most to Least Important)', fontsize=14, fontweight='bold')
+        ax3.grid(axis='x', alpha=0.3)
+
+    # Plot 4
+    ax4 = axes[1, 1]
+    all_f1 = [baseline_f1] + f1_means_sorted
+    all_labels = ['Baseline'] + feature_names_sorted
+    x = np.arange(len(all_labels))
+    bars4 = ax4.bar(x, all_f1, color=['red'] + list(colors), edgecolor='black', linewidth=0.5)
+    ax4.set_ylabel('F1 Score', fontsize=12)
+    ax4.set_title('Baseline vs Feature Removal Comparison', fontsize=14, fontweight='bold')
+    ax4.set_xticks(x)
+    ax4.set_xticklabels(all_labels, rotation=45, ha='right')
+    ax4.set_ylim(0, 1.0)
+    ax4.grid(axis='y', alpha=0.3)
     for bar, val in zip(bars4, all_f1):
         ax4.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
                 f'{val:.4f}', ha='center', va='bottom', fontsize=9)
@@ -712,21 +799,29 @@ def main():
     parser.add_argument("--model-name", type=str, default="xgboost")
     parser.add_argument("--cv", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--study-type", type=str, choices=["pipeline", "lsh", "both"], default="both")
+    parser.add_argument("--study-type", type=str, choices=["pipeline", "lsh", "both", "individual", "group"], default="both")
+    parser.add_argument("--use-test-data", action="store_true", default=True,
+                        help="Use test dataset instead of training data (default: True)")
     args = parser.parse_args()
 
     # Create output directory
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "plots").mkdir(exist_ok=True)
 
-    # Load training data
-    logger.info("Loading training data...")
-    train_features_path = args.intermediate_dir / "features" / "train_features.csv"
-    if not train_features_path.exists():
-        logger.error("Training features not found. Run feature engineering first.")
+    # Load data - use test dataset by default
+    logger.info("Loading data...")
+    if args.use_test_data:
+        features_path = args.intermediate_dir / "features" / "test_features.csv"
+        logger.info("Using TEST dataset")
+    else:
+        features_path = args.intermediate_dir / "features" / "train_features.csv"
+        logger.info("Using TRAINING dataset")
+
+    if not features_path.exists():
+        logger.error("Features not found: %s", features_path)
         return
 
-    feat_df = pd.read_csv(train_features_path)
+    feat_df = pd.read_csv(features_path)
     all_feature_cols = [c for c in feat_df.columns if c not in ("label", "id1", "id2")]
 
     # Load selected features if available

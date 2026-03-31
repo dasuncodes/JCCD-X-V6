@@ -31,6 +31,7 @@ fi
 
 echo "Running comprehensive ablation study..."
 echo ""
+echo "  Dataset: TEST set (for paper results)"
 echo "  Studies:"
 echo "    1. Individual Feature Ablation (remove each feature)"
 echo "    2. Feature Group Ablation (remove feature groups)"
@@ -39,9 +40,10 @@ echo ""
 echo "  Output:"
 echo "    - artifacts/evaluation/ablation_study/"
 echo "    - JSON results, CSV tables, PNG plots"
+echo "    - Individual plot files for each visualization"
 echo ""
 
-# Run ablation study with all studies
+# Run ablation study with all studies (using test data by default)
 poetry run python -m src.python.evaluation.run_ablation_study \
     --data-dir data/processed \
     --intermediate-dir data/intermediate \
@@ -50,7 +52,8 @@ poetry run python -m src.python.evaluation.run_ablation_study \
     --model-name xgboost \
     --cv 5 \
     --seed 42 \
-    --study-type both
+    --study-type both \
+    --use-test-data
 
 echo ""
 echo "=========================================="
@@ -69,10 +72,17 @@ echo "    - artifacts/evaluation/ablation_study/individual_feature_ablation_summ
 echo "    - artifacts/evaluation/ablation_study/feature_group_ablation_summary.csv/.md"
 echo "    - artifacts/evaluation/ablation_study/lsh_ablation_summary.csv/.md"
 echo ""
-echo "  Visualizations:"
+echo "  Combined Visualizations:"
 echo "    - artifacts/evaluation/ablation_study/plots/individual_feature_ablation_comparison.png"
 echo "    - artifacts/evaluation/ablation_study/plots/feature_group_ablation_comparison.png"
 echo "    - artifacts/evaluation/ablation_study/plots/lsh_ablation_comparison.png"
+echo ""
+echo "  Individual Feature Plots:"
+echo "    - artifacts/evaluation/ablation_study/individual_f1_comparison.png"
+echo "    - artifacts/evaluation/ablation_study/individual_f1_degradation.png"
+echo "    - artifacts/evaluation/ablation_study/individual_feature_ranking.png"
+echo "    - artifacts/evaluation/ablation_study/individual_baseline_comparison.png"
+echo "    - artifacts/evaluation/ablation_study/individual_feature_plots/ (separate files)"
 echo ""
 echo "For paper:"
 echo "  - Use individual feature ablation for feature importance analysis"
