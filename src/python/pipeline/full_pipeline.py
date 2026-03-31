@@ -652,7 +652,6 @@ def main() -> None:
         # Check if model was trained with RFE-selected features
         selected_features_path = args.model_dir / "selected_features.json"
         if selected_features_path.exists():
-            import json
             with open(selected_features_path, 'r') as f:
                 feature_cols = json.load(f)
             logger.info("Using RFE-selected features: %d features", len(feature_cols))
