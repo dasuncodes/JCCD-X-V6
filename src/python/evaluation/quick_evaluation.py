@@ -491,12 +491,31 @@ def run_quick_evaluation(
 
         # Predict on same sample for quick metrics
         y_pred = model.predict(X_sample)
-        try:
-            y_proba = model.predict_proba(X_sample)[:, 1]
-            y_proba_dict[name] = y_proba
-            auc = roc_auc_score(y_sample, y_proba)
-        except Exception:
-            y_proba = None
+
+        # Get probabilities or decision scores
+        y_proba = None
+        auc = 0.0
+
+        if hasattr(model, "predict_proba"):
+            try:
+                y_proba = model.predict_proba(X_sample)[:, 1]
+                y_proba_dict[name] = y_proba
+                auc = roc_auc_score(y_sample, y_proba)
+            except Exception:
+                y_proba_dict[name] = None
+                auc = 0.0
+        elif hasattr(model, "decision_function"):
+            # For SVM, use decision function scores
+            try:
+                decision_scores = model.decision_function(X_sample)
+                # Convert to probabilities using sigmoid
+                y_proba = 1 / (1 + np.exp(-decision_scores))
+                y_proba_dict[name] = y_proba
+                auc = roc_auc_score(y_sample, decision_scores)
+            except Exception:
+                y_proba_dict[name] = None
+                auc = 0.0
+        else:
             y_proba_dict[name] = None
             auc = 0.0
 

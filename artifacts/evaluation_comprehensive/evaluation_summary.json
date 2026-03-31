@@ -1,0 +1,27 @@
+{
+  "best_model": "xgboost",
+  "best_f1": 0.9196386115073705,
+  "best_auc": 0.993232801095843,
+  "models_evaluated": [
+    "xgboost",
+    "random_forest",
+    "logistic_regression",
+    "linear_svm",
+    "knn"
+  ],
+  "plots_generated": [
+    "model_comparison_f1.png",
+    "model_comparison_auc.png",
+    "model_efficiency_scatter.png",
+    "roc_curves_comparison.png",
+    "pr_curves_comparison.png",
+    "threshold_sensitivity.png",
+    "class_distribution.png",
+    "class_distribution_multiclass.png",
+    "confusion_matrix_binary.png",
+    "error_analysis.png",
+    "feature_group_contribution.png",
+    "lsh_pareto_curve.png",
+    "lsh_recall_vs_reduction.png"
+  ]
+}
