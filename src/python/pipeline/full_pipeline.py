@@ -737,6 +737,10 @@ def main() -> None:
     args.eval_dir.mkdir(parents=True, exist_ok=True)
     save_json(metrics, args.eval_dir / "pipeline_metrics.json")
 
+    # Plots directory
+    plots_dir = args.eval_dir / "plots" / "pipeline"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
     # Multi-class evaluation (Non, Type-1, Type-2, Type-3)
     # Build ground truth and predictions for all pairs
     from sklearn.metrics import confusion_matrix, classification_report
@@ -758,10 +762,6 @@ def main() -> None:
     report = classification_report(y_true, y_pred, target_names=class_names, output_dict=True)
     save_json(report, args.eval_dir / "classification_report.json")
     logger.info("Multi-class confusion matrix and classification report saved")
-
-    # Plots
-    plots_dir = args.eval_dir / "plots" / "pipeline"
-    plots_dir.mkdir(parents=True, exist_ok=True)
 
     # Stacked bar: clones per type
     type1_count = len(type1_pairs)
