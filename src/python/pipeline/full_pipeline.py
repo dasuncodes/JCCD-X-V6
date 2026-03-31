@@ -203,6 +203,12 @@ def lsh_candidate_pairs(
                 buckets[bucket_key] = []
             buckets[bucket_key].append(fid)
             file_to_buckets[fid].append(bucket_key)
+    # Precompute bucket sets for efficient intersection
+    file_to_bucket_sets = {fid: set(keys) for fid, keys in file_to_buckets.items()}
+    bucket_sets_list = [set() for _ in range(len(valid_ids))]
+    for fid, s in file_to_bucket_sets.items():
+        idx = fid_to_index[fid]
+        bucket_sets_list[idx] = s
 
     logger.info("LSH: bucket assignment done in %.2fs", time.time() - t0)
 
@@ -214,12 +220,12 @@ def lsh_candidate_pairs(
         # Direct checking: iterate over ml_pair_set
         for id1, id2 in ml_pair_set:
             # Skip if either file not in token_data (should be already filtered)
-            if id1 not in file_to_buckets or id2 not in file_to_buckets:
+            if id1 not in fid_to_index or id2 not in fid_to_index:
                 continue
+            idx1 = fid_to_index[id1]
+            idx2 = fid_to_index[id2]
             # Check if any bucket key is shared
-            # Since each file has at most bands bucket keys, we can intersect
-            # Use set intersection for efficiency
-            if set(file_to_buckets[id1]) & set(file_to_buckets[id2]):
+            if bucket_sets_list[idx1] & bucket_sets_list[idx2]:
                 candidates.add((id1, id2))
         logger.info(
             "LSH: direct checking done in %.2fs, %d candidates", time.time() - t0, len(candidates)
@@ -229,9 +235,11 @@ def lsh_candidate_pairs(
         for _, row in ml_df.iterrows():
             id1 = row["id1"]
             id2 = row["id2"]
-            if id1 not in file_to_buckets or id2 not in file_to_buckets:
+            if id1 not in fid_to_index or id2 not in fid_to_index:
                 continue
-            if set(file_to_buckets[id1]) & set(file_to_buckets[id2]):
+            idx1 = fid_to_index[id1]
+            idx2 = fid_to_index[id2]
+            if bucket_sets_list[idx1] & bucket_sets_list[idx2]:
                 candidates.add((min(id1, id2), max(id1, id2)))
         logger.info(
             "LSH: direct checking (df) done in %.2fs, %d candidates",
