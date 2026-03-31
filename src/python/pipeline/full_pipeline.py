@@ -684,14 +684,21 @@ def main() -> None:
 
     X = feat_df[feature_cols].values.astype(np.float64)
     X = np.nan_to_num(X, nan=0.0, posinf=1.0, neginf=0.0)
+    logger.info("Classification input shape: %s", X.shape)
+
     if hasattr(model, "predict_proba"):
         proba = model.predict_proba(X)[:, 1]
+        logger.info("Probability stats: min=%.4f, max=%.4f, mean=%.4f",
+                    proba.min(), proba.max(), proba.mean())
+        logger.info("Positive predictions (proba >= %.3f): %d / %d",
+                    args.threshold, (proba >= args.threshold).sum(), len(proba))
         y_pred = (proba >= args.threshold).astype(int)
         # Map binary predictions to clone type labels (0 -> non-clone, 1 -> type-3)
         y_pred = np.where(y_pred == 1, 3, 0)
         logger.info("Using classification threshold: %.3f", args.threshold)
     else:
         y_pred = model.predict(X)
+        logger.info("Predictions: %d samples", len(y_pred))
     step4_time = time.time() - step4_start
 
     # Build predictions dictionary
@@ -827,6 +834,7 @@ def main() -> None:
 
     print("\n=== Pipeline Summary ===")
     print(f"Type-1 clones detected: {type1_count}")
+    print(f"Type-2 clones detected: {len(type2_pairs)}")
     print(f"Type-3: TP={metrics['tp']} FP={metrics['fp']} TN={metrics['tn']} FN={metrics['fn']}")
     print(f"Accuracy: {metrics['accuracy']:.4f}")
     print(f"Precision: {metrics['precision']:.4f}")
@@ -834,6 +842,13 @@ def main() -> None:
     print(f"F1: {metrics['f1']:.4f}")
     print(f"LSH reduction: {metrics['lsh_reduction_ratio']*100:.1f}%")
     print(f"Total time: {total_time:.1f}s")
+    print("")
+    print("⚠️  WARNING: Precision/Recall = 0 means ML classifier predicts ALL as non-clone!")
+    print("   Possible causes:")
+    print("   1. Feature mismatch (model trained with different features)")
+    print("   2. Threshold too high (try --threshold 0.1)")
+    print("   3. Model needs retraining with current features")
+    print("   Check: artifacts/evaluation/pipeline_metrics.json")
     print("Done.")
 
 
