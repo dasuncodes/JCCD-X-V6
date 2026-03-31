@@ -1,0 +1,32 @@
+{
+  "xgboost": {
+    "f1": 0.9196386115073705,
+    "accuracy": 0.9662,
+    "roc_auc": 0.993232801095843,
+    "training_time_sec": 113.60287475585938
+  },
+  "random_forest": {
+    "f1": 0.8944281524926686,
+    "accuracy": 0.9568,
+    "roc_auc": 0.9915359626810718,
+    "training_time_sec": 1.4285671710968018
+  },
+  "logistic_regression": {
+    "f1": 0.8387734915924827,
+    "accuracy": 0.9348,
+    "roc_auc": 0.9746738708718443,
+    "training_time_sec": 71.89725828170776
+  },
+  "linear_svm": {
+    "f1": 0.8392156862745098,
+    "accuracy": 0.9344,
+    "roc_auc": 0.0,
+    "training_time_sec": 0.4487578868865967
+  },
+  "knn": {
+    "f1": 0.7845410628019324,
+    "accuracy": 0.9108,
+    "roc_auc": 0.9664430528599237,
+    "training_time_sec": 0.0010788440704345703
+  }
+}
