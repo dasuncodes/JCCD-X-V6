@@ -45,12 +45,17 @@ echo "    - Non-clones: 30% (~117,000 pairs)"
 echo ""
 
 # Run pipeline
+# Optimized LSH parameters for better recall (93%+) while maintaining good filtering (~46% reduction)
+# Adjust --lsh-bands and --lsh-hashes based on your needs:
+#   - More bands (e.g., 24) = higher recall, less filtering
+#   - Fewer bands (e.g., 12) = lower recall, more filtering
+#   - See LSH_OPTIMIZATION_RESULTS.md for detailed comparison
 poetry run python -m src.python.pipeline.full_pipeline \
     --data-dir data/processed \
     --intermediate-dir data/intermediate \
     --model-dir artifacts/models \
     --eval-dir artifacts/evaluation \
-    --lsh-hashes 128 \
+    --lsh-hashes 48 \
     --lsh-bands 16 \
     --shingle-k 3
 

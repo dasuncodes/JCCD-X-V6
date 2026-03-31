@@ -692,33 +692,28 @@ def main() -> None:
                     proba.min(), proba.max(), proba.mean())
         logger.info("Positive predictions (proba >= %.3f): %d / %d",
                     args.threshold, (proba >= args.threshold).sum(), len(proba))
-        y_pred = (proba >= args.threshold).astype(int)
-        # Map binary predictions to clone type labels (0 -> non-clone, 1 -> type-3)
-        y_pred = np.where(y_pred == 1, 3, 0)
+        y_pred_binary = (proba >= args.threshold).astype(int)
+        # Keep binary predictions for evaluation (0=non-clone, 1=type-3)
+        # Will map to multi-class labels later for final output
+        y_pred = y_pred_binary
         logger.info("Using classification threshold: %.3f", args.threshold)
     else:
         y_pred = model.predict(X)
         logger.info("Predictions: %d samples", len(y_pred))
     step4_time = time.time() - step4_start
 
-    # Build predictions dictionary
+    # Build predictions dictionary for ML evaluation (binary: 0=non-clone, 1=type-3)
     # LSH candidates: use ML predictions
-    predictions = {}
+    predictions_binary = {}
     for i, row in feat_df.iterrows():
         pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
-        predictions[pair] = int(y_pred[i])
+        predictions_binary[pair] = int(y_pred[i])
     # Non-candidates: predicted as non-clone (label 0)
     for _, row in non_candidates.iterrows():
         pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
-        predictions[pair] = 0
+        predictions_binary[pair] = 0
 
-    # Add rule-based predictions (type-1 and type-2)
-    for pair in type1_set:
-        predictions[pair] = 1
-    for pair in type2_set:
-        predictions[pair] = 2
-
-    # Step 5: Full pipeline evaluation
+    # Step 5: Full pipeline evaluation (using binary labels)
     logger.info("=== Step 5: Evaluation ===")
 
     # Ground truth from ML-evaluable set (use binary_label for evaluation)
@@ -727,13 +722,29 @@ def main() -> None:
         pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
         ground_truth[pair] = int(row["binary_label"])
 
+    # Evaluate with binary labels first
+    metrics = evaluate_pipeline(predictions_binary, ground_truth)
+
+    # Convert binary predictions to multi-class for final output
+    # (0=non-clone, 1=type-1, 2=type-2, 3=type-3)
+    predictions = {}
+    for pair, pred_bin in predictions_binary.items():
+        predictions[pair] = 3 if pred_bin == 1 else 0
+
+    # Add rule-based predictions (type-1 and type-2)
+    for pair in type1_set:
+        predictions[pair] = 1
+    for pair in type2_set:
+        predictions[pair] = 2
+
     # Ground truth for all pairs (including type-1, type-2)
     ground_truth_all = {}
     for _, row in test_df.iterrows():
         pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
         ground_truth_all[pair] = int(row["label"])
 
-    metrics = evaluate_pipeline(predictions, ground_truth)
+    # Note: metrics already computed from binary evaluation above
+    # No need to re-evaluate with multi-class labels
     total_time = time.time() - total_start
 
     # Add timing and LSH metrics
@@ -843,12 +854,18 @@ def main() -> None:
     print(f"LSH reduction: {metrics['lsh_reduction_ratio']*100:.1f}%")
     print(f"Total time: {total_time:.1f}s")
     print("")
-    print("⚠️  WARNING: Precision/Recall = 0 means ML classifier predicts ALL as non-clone!")
-    print("   Possible causes:")
-    print("   1. Feature mismatch (model trained with different features)")
-    print("   2. Threshold too high (try --threshold 0.1)")
-    print("   3. Model needs retraining with current features")
-    print("   Check: artifacts/evaluation/pipeline_metrics.json")
+
+    # Show warning if precision/recall are very low (possible issues)
+    if metrics['recall'] < 0.1:
+        print("")
+        print("⚠️  WARNING: Very low recall detected!")
+        print("   This usually means LSH filtering is too aggressive.")
+        print("   Try these solutions:")
+        print("   1. Reduce LSH filtering: --lsh-bands 16 --lsh-hashes 48")
+        print("   2. Skip LSH entirely: --skip-lsh")
+        print("   3. Lower classification threshold: --threshold 0.2")
+        print("   Check: artifacts/evaluation/pipeline_metrics.json")
+
     print("Done.")
 
 
