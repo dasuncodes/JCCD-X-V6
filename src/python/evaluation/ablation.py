@@ -146,7 +146,16 @@ def run_pipeline_ablation(
     baseline = results["configurations"]["full"]
     for config_name, config in results["configurations"].items():
         if config_name != "full":
-            delta = compute_ablation_metrics(baseline, config, config_name)
+            # Create simplified metric dicts for comparison
+            baseline_simple = {
+                "f1": baseline["f1_mean"],
+                "accuracy": baseline["accuracy_mean"],
+            }
+            config_simple = {
+                "f1": config["f1_mean"],
+                "accuracy": config["accuracy_mean"],
+            }
+            delta = compute_ablation_metrics(baseline_simple, config_simple, config_name)
             results["configurations"][config_name]["delta_f1"] = delta["delta"]["f1"]
             results["configurations"][config_name]["delta_f1_pct"] = delta["delta"]["f1_pct_change"]
 
