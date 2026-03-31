@@ -24,7 +24,107 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Pipeline Ablation Study
+# Individual Feature Ablation
+# ---------------------------------------------------------------------------
+
+def run_individual_feature_ablation(
+    X: np.ndarray,
+    y: np.ndarray,
+    feature_names: list[str],
+    model_name: str = "xgboost",
+    cv: int = 5,
+    seed: int = 42,
+) -> dict:
+    """
+    Run ablation study by removing each individual feature.
+
+    Returns metrics for each feature removal to identify most important features.
+    """
+    model = get_models().get(model_name)
+    if model is None:
+        raise ValueError(f"Model {model_name} not found")
+
+    results = {
+        "model": model_name,
+        "study_type": "individual_feature_ablation",
+        "feature_names": feature_names,
+        "configurations": {},
+    }
+
+    n_features = X.shape[1]
+
+    # Full pipeline (baseline)
+    logger.info("Evaluating: Full pipeline (baseline)")
+    start = time.time()
+    f1_scores = cross_val_score(model, X, y, cv=cv, scoring="f1")
+    acc_scores = cross_val_score(model, X, y, cv=cv, scoring="accuracy")
+    prec_scores = cross_val_score(model, X, y, cv=cv, scoring="precision")
+    rec_scores = cross_val_score(model, X, y, cv=cv, scoring="recall")
+    elapsed = time.time() - start
+
+    baseline_f1 = float(np.mean(f1_scores))
+
+    results["configurations"]["full"] = {
+        "f1_mean": baseline_f1,
+        "f1_std": float(np.std(f1_scores)),
+        "accuracy_mean": float(np.mean(acc_scores)),
+        "accuracy_std": float(np.std(acc_scores)),
+        "precision_mean": float(np.mean(prec_scores)),
+        "recall_mean": float(np.mean(rec_scores)),
+        "elapsed_sec": elapsed,
+        "description": "Full pipeline with all features",
+        "feature_count": n_features,
+    }
+
+    # Remove each feature one by one
+    for i, feat_name in enumerate(feature_names):
+        logger.info(f"Evaluating: Remove '{feat_name}' ({i+1}/{n_features})")
+
+        keep_features = [j for j in range(n_features) if j != i]
+        X_reduced = X[:, keep_features]
+
+        start = time.time()
+        f1_scores = cross_val_score(model, X_reduced, y, cv=cv, scoring="f1")
+        acc_scores = cross_val_score(model, X_reduced, y, cv=cv, scoring="accuracy")
+        prec_scores = cross_val_score(model, X_reduced, y, cv=cv, scoring="precision")
+        rec_scores = cross_val_score(model, X_reduced, y, cv=cv, scoring="recall")
+        elapsed = time.time() - start
+
+        f1_mean = float(np.mean(f1_scores))
+        delta_f1 = f1_mean - baseline_f1
+        delta_f1_pct = (delta_f1 / baseline_f1 * 100) if baseline_f1 > 0 else 0
+
+        config_name = f"no_{feat_name}"
+        results["configurations"][config_name] = {
+            "f1_mean": f1_mean,
+            "f1_std": float(np.std(f1_scores)),
+            "accuracy_mean": float(np.mean(acc_scores)),
+            "accuracy_std": float(np.std(acc_scores)),
+            "precision_mean": float(np.mean(prec_scores)),
+            "recall_mean": float(np.mean(rec_scores)),
+            "elapsed_sec": elapsed,
+            "description": f"Without {feat_name}",
+            "feature_count": n_features - 1,
+            "removed_feature": feat_name,
+            "delta_f1": delta_f1,
+            "delta_f1_pct": delta_f1_pct,
+        }
+
+    # Sort by delta_f1 (most important first)
+    sorted_configs = sorted(
+        [(k, v) for k, v in results["configurations"].items() if k != "full"],
+        key=lambda x: x[1]["delta_f1"]
+    )
+    results["feature_importance_ranking"] = [
+        {"rank": i+1, "feature": v["removed_feature"], "delta_f1": v["delta_f1"], "delta_f1_pct": v["delta_f1_pct"]}
+        for i, (k, v) in enumerate(sorted_configs)
+    ]
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Feature Group Ablation (Enhanced)
 # ---------------------------------------------------------------------------
 
 def run_pipeline_ablation(
@@ -328,6 +428,93 @@ def run_lsh_ablation(
 # Visualization Functions
 # ---------------------------------------------------------------------------
 
+def plot_individual_feature_ablation(results: dict, output_path: Path):
+    """Create individual feature ablation comparison plots."""
+
+    configs = {k: v for k, v in results["configurations"].items() if k != "full"}
+    feature_names = [v["removed_feature"] for v in configs.values()]
+    f1_means = [v["f1_mean"] for v in configs.values()]
+    f1_stds = [v["f1_std"] for v in configs.values()]
+    delta_f1_pct = [v["delta_f1_pct"] for v in configs.values()]
+
+    # Sort by delta_f1 (most impactful first)
+    sorted_idx = np.argsort(delta_f1_pct)
+    feature_names = [feature_names[i] for i in sorted_idx]
+    f1_means = [f1_means[i] for i in sorted_idx]
+    f1_stds = [f1_stds[i] for i in sorted_idx]
+    delta_f1_pct = [delta_f1_pct[i] for i in sorted_idx]
+
+    # Get baseline
+    baseline_f1 = results["configurations"]["full"]["f1_mean"]
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+
+    # Plot 1: F1 Score Comparison (sorted)
+    ax1 = axes[0, 0]
+    colors = plt.cm.RdYlGn(np.linspace(0.2, 0.8, len(feature_names)))
+    bars1 = ax1.barh(feature_names, f1_means, xerr=f1_stds, capsize=3, color=colors)
+    ax1.axvline(x=baseline_f1, color='red', linestyle='--', linewidth=2, label=f'Baseline: {baseline_f1:.4f}')
+    ax1.set_xlabel('F1 Score', fontsize=12)
+    ax1.set_title('F1 Score After Removing Each Feature', fontsize=14, fontweight='bold')
+    ax1.legend()
+    ax1.grid(axis='x', alpha=0.3)
+
+    # Plot 2: F1 Degradation (sorted by impact)
+    ax2 = axes[0, 1]
+    colors2 = plt.cm.RdYlGn(np.linspace(0, 1, len(delta_f1_pct)))
+    bars2 = ax2.barh(feature_names, delta_f1_pct, color=colors2)
+    ax2.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
+    ax2.set_xlabel('Δ F1 (%)', fontsize=12)
+    ax2.set_title('F1 Score Degradation by Feature', fontsize=14, fontweight='bold')
+    ax2.grid(axis='x', alpha=0.3)
+
+    # Add value labels
+    for bar, val in zip(bars2, delta_f1_pct):
+        ax2.text(bar.get_width() + (0.3 if val > 0 else -0.5), bar.get_y() + bar.get_height()/2,
+                f'{val:.2f}%', ha='left' if val > 0 else 'right', va='center', fontsize=10, fontweight='bold')
+
+    # Plot 3: Feature Importance Ranking
+    ax3 = axes[1, 0]
+    ranking = results.get("feature_importance_ranking", [])
+    if ranking:
+        ranks = [r["rank"] for r in ranking]
+        features_rank = [r["feature"] for r in ranking]
+        delta_vals = [r["delta_f1_pct"] for r in ranking]
+
+        y_pos = np.arange(len(features_rank))
+        colors3 = plt.cm.RdYlGn(1 - np.array(ranks) / max(ranks))
+        ax3.barh(y_pos, delta_vals, color=colors3)
+        ax3.set_yticks(y_pos)
+        ax3.set_yticklabels(features_rank)
+        ax3.set_xlabel('Δ F1 (%)', fontsize=12)
+        ax3.set_title('Feature Importance Ranking (Most to Least Important)', fontsize=14, fontweight='bold')
+        ax3.grid(axis='x', alpha=0.3)
+
+    # Plot 4: Baseline vs Each Removal
+    ax4 = axes[1, 1]
+    all_f1 = [baseline_f1] + f1_means
+    all_labels = ['Baseline'] + feature_names
+    x = np.arange(len(all_labels))
+
+    bars4 = ax4.bar(x, all_f1, color=['red'] + list(colors), edgecolor='black', linewidth=0.5)
+    ax4.set_ylabel('F1 Score', fontsize=12)
+    ax4.set_title('Baseline vs Feature Removal Comparison', fontsize=14, fontweight='bold')
+    ax4.set_xticks(x)
+    ax4.set_xticklabels(all_labels, rotation=45, ha='right')
+    ax4.set_ylim(0, 1.0)
+    ax4.grid(axis='y', alpha=0.3)
+
+    # Add value labels
+    for bar, val in zip(bars4, all_f1):
+        ax4.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                f'{val:.4f}', ha='center', va='bottom', fontsize=9)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    logger.info(f"Saved individual feature ablation plot to {output_path}")
+
+
 def plot_pipeline_ablation(results: dict, output_path: Path):
     """Create comprehensive pipeline ablation comparison plots."""
 
@@ -563,9 +750,29 @@ def main():
     # Run studies
     results = {}
 
-    if args.study_type in ["pipeline", "both"]:
+    if args.study_type in ["pipeline", "both", "individual"]:
         logger.info("\n" + "="*70)
-        logger.info("Running Pipeline Ablation Study")
+        logger.info("Running Individual Feature Ablation Study")
+        logger.info("="*70)
+        individual_results = run_individual_feature_ablation(
+            X, y, feature_names=feature_cols, model_name=args.model_name, cv=args.cv, seed=args.seed
+        )
+        results["individual"] = individual_results
+
+        # Save results
+        save_json(individual_results, args.output_dir / "individual_feature_ablation_results.json")
+        plot_individual_feature_ablation(
+            individual_results,
+            args.output_dir / "plots" / "individual_feature_ablation_comparison.png"
+        )
+        create_summary_table(
+            individual_results,
+            args.output_dir / "individual_feature_ablation_summary"
+        )
+
+    if args.study_type in ["pipeline", "both", "group"]:
+        logger.info("\n" + "="*70)
+        logger.info("Running Feature Group Ablation Study")
         logger.info("="*70)
         pipeline_results = run_pipeline_ablation(
             X, y, model_name=args.model_name, cv=args.cv, seed=args.seed,
@@ -574,14 +781,14 @@ def main():
         results["pipeline"] = pipeline_results
 
         # Save results
-        save_json(pipeline_results, args.output_dir / "pipeline_ablation_results.json")
+        save_json(pipeline_results, args.output_dir / "feature_group_ablation_results.json")
         plot_pipeline_ablation(
             pipeline_results,
-            args.output_dir / "plots" / "pipeline_ablation_comparison.png"
+            args.output_dir / "plots" / "feature_group_ablation_comparison.png"
         )
         create_summary_table(
             pipeline_results,
-            args.output_dir / "pipeline_ablation_summary"
+            args.output_dir / "feature_group_ablation_summary"
         )
 
     if args.study_type in ["lsh", "both"]:
@@ -607,8 +814,9 @@ def main():
     # Create combined summary
     if args.study_type == "both":
         combined_results = {
-            "pipeline": results["pipeline"],
-            "lsh": results["lsh"],
+            "individual": results.get("individual"),
+            "feature_group": results.get("pipeline"),
+            "lsh": results.get("lsh"),
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         save_json(combined_results, args.output_dir / "combined_ablation_results.json")
@@ -618,11 +826,20 @@ def main():
     logger.info("="*70)
     logger.info(f"Output directory: {args.output_dir}")
     logger.info("Files created:")
-    logger.info("  - pipeline_ablation_results.json")
-    logger.info("  - lsh_ablation_results.json")
-    logger.info("  - plots/pipeline_ablation_comparison.png")
-    logger.info("  - plots/lsh_ablation_comparison.png")
-    logger.info("  - *_ablation_summary.csv/.md")
+    if "individual" in results:
+        logger.info("  - individual_feature_ablation_results.json")
+        logger.info("  - plots/individual_feature_ablation_comparison.png")
+        logger.info("  - individual_feature_ablation_summary.csv/.md")
+    if "pipeline" in results:
+        logger.info("  - feature_group_ablation_results.json")
+        logger.info("  - plots/feature_group_ablation_comparison.png")
+        logger.info("  - feature_group_ablation_summary.csv/.md")
+    if "lsh" in results:
+        logger.info("  - lsh_ablation_results.json")
+        logger.info("  - plots/lsh_ablation_comparison.png")
+        logger.info("  - lsh_ablation_summary.csv/.md")
+    if args.study_type == "both":
+        logger.info("  - combined_ablation_results.json")
 
 
 if __name__ == "__main__":
