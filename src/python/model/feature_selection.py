@@ -293,18 +293,21 @@ def main() -> None:
             model_retrained = get_models()[args.model_name]
             X_selected = X[:, selected_indices]
             model_retrained.fit(X_selected, y)
-            
+
             # Save retrained model
             args.output_model_dir.mkdir(parents=True, exist_ok=True)
             model_path = args.output_model_dir / "best_model_rfe.joblib"
             joblib.dump(model_retrained, model_path)
             logger.info("Saved retrained model with %d features to %s", len(selected_indices), model_path)
-            
+
             # Save selected feature names
             selected_feature_names = [feature_cols[i] for i in selected_indices]
             args.selected_features_file.parent.mkdir(parents=True, exist_ok=True)
             save_json(selected_feature_names, args.selected_features_file)
             logger.info("Saved selected feature names to %s", args.selected_features_file)
+
+    # Define plots_dir before using it
+    plots_dir = args.output_dir / "plots" / "rfe"
     logger.info("Results saved to %s", args.output_dir)
     logger.info("Plots saved to %s", plots_dir)
 
