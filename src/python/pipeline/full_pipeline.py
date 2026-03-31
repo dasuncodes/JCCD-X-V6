@@ -24,11 +24,14 @@ logger = logging.getLogger(__name__)
 # Rule-based detection
 # ---------------------------------------------------------------------------
 
+
 def _compute_source_hashes(
-    ids: set, normalized_dir: Path,
+    ids: set,
+    normalized_dir: Path,
 ) -> dict:
     """Compute MD5 hashes of normalized source files for all IDs."""
     import hashlib
+
     hashes = {}
     for fid in ids:
         path = normalized_dir / f"{fid}.java"
@@ -44,7 +47,9 @@ def _compute_source_hashes(
 
 
 def detect_type1_type2(
-    df: pd.DataFrame, token_data: dict, normalized_dir: Path,
+    df: pd.DataFrame,
+    token_data: dict,
+    normalized_dir: Path,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Detect type-1 (identical normalized source) and type-2 (identical abstracted tokens).
 
@@ -94,20 +99,60 @@ def detect_type1_type2(
 # LSH candidate filtering (using Zig libraries)
 # ---------------------------------------------------------------------------
 
+
 def lsh_candidate_pairs(
-    ids: list, token_data: dict, num_hashes: int = 128,
-    bands: int = 16, k: int = 3,
+    ids: list,
+    token_data: dict,
+    num_hashes: int = 128,
+    bands: int = 16,
+    k: int = 3,
+    max_bucket_size: int = 1000,
+    ml_pair_set: set[tuple] = None,
+    ml_df: pd.DataFrame = None,
+    sim_threshold: float = 0.0,
 ) -> set[tuple]:
-    """Find candidate pairs using MinHash LSH with Zig acceleration."""
+    """Find candidate pairs using MinHash LSH with Zig acceleration.
+
+    If ml_pair_set is provided, only return candidates that are in ml_pair_set.
+    This is more efficient than generating all candidate pairs.
+    """
     from src.bindings.minhash import MinHashLib
     from src.bindings.shingling import ShinglingLib
 
+    # Parameter validation
+    if k < 1:
+        raise ValueError(f"Shingle size k must be >= 1, got {k}")
+    if bands <= 0:
+        raise ValueError(f"Number of bands must be > 0, got {bands}")
+    if num_hashes <= 0:
+        raise ValueError(f"Number of hashes must be > 0, got {num_hashes}")
+    if bands > num_hashes:
+        logger.warning(
+            "bands (%d) > num_hashes (%d) leads to rows_per_band = 0. "
+            "Setting rows_per_band = 1 and adjusting bands to num_hashes.",
+            bands,
+            num_hashes,
+        )
+        bands = num_hashes
+    if num_hashes % bands != 0:
+        logger.warning(
+            "num_hashes (%d) not divisible by bands (%d). " "LSH effectiveness may be reduced.",
+            num_hashes,
+            bands,
+        )
+    rows_per_band = num_hashes // bands
+    if rows_per_band == 0:
+        # Should not happen due to above check, but fallback
+        rows_per_band = 1
+        bands = num_hashes
+        logger.warning("Adjusted bands to %d to ensure rows_per_band > 0", bands)
+
     shingling_lib = ShinglingLib()
     minhash_lib = MinHashLib()
-    rows_per_band = num_hashes // bands
 
     # Build arrays for all valid IDs
     valid_ids = [fid for fid in ids if fid in token_data]
+    fid_to_index = {fid: i for i, fid in enumerate(valid_ids)}
     logger.info("LSH: processing %d files", len(valid_ids))
 
     # Step 1: Compute shingles for all files using Zig batch
@@ -123,54 +168,122 @@ def lsh_candidate_pairs(
 
     t0 = time.time()
     all_shingles, shingle_offsets = shingling_lib.compute_shingles_batch(
-        all_tokens_arr, token_counts_arr, k,
+        all_tokens_arr,
+        token_counts_arr,
+        k,
     )
     logger.info("LSH: shingling done in %.2fs (%d shingles)", time.time() - t0, len(all_shingles))
 
-    # Step 2: Compute MinHash signatures for each file
+    # Step 2: Compute MinHash signatures for each file (batch)
     t0 = time.time()
-    signatures = np.zeros((len(valid_ids), num_hashes), dtype=np.uint64)
-
-    for i, fid in enumerate(valid_ids):
-        start = shingle_offsets[i]
-        if i + 1 < len(valid_ids):
-            end = shingle_offsets[i + 1]
-        else:
-            end = len(all_shingles)
-        shingles = all_shingles[start:end]
-        if len(shingles) > 0:
-            signatures[i] = minhash_lib.minhash_signature(shingles, num_hashes)
-        else:
-            signatures[i] = np.iinfo(np.uint64).max
-
+    # Compute shingle counts per file
+    shingle_counts = np.diff(shingle_offsets, append=len(all_shingles))
+    # Batch compute signatures
+    signatures = minhash_lib.minhash_signature_batch_flat(
+        all_shingles,
+        shingle_offsets,
+        shingle_counts,
+        num_hashes,
+    )
     logger.info("LSH: minhash done in %.2fs", time.time() - t0)
 
     # Step 3: LSH bucket assignment
     t0 = time.time()
+    # bucket_key -> list of file_ids
     buckets: dict[tuple[int, int], list] = {}
+    # file_id -> list of bucket_keys (for intersection)
+    file_to_buckets: dict[int, list] = {fid: [] for fid in valid_ids}
 
+    # Batch compute bucket IDs for all files
+    bucket_ids = minhash_lib.lsh_buckets_batch(signatures, bands, rows_per_band)
     for i, fid in enumerate(valid_ids):
-        band_buckets = minhash_lib.lsh_buckets(signatures[i], bands, rows_per_band)
         for b in range(bands):
-            bucket_key = (b, int(band_buckets[b]))
+            bucket_key = (b, int(bucket_ids[i, b]))
             if bucket_key not in buckets:
                 buckets[bucket_key] = []
             buckets[bucket_key].append(fid)
+            file_to_buckets[fid].append(bucket_key)
 
-    # Generate candidate pairs (limit bucket size to prevent explosion)
-    MAX_BUCKET_SIZE = 500
+    logger.info("LSH: bucket assignment done in %.2fs", time.time() - t0)
+
+    # Step 4: Find candidates among ml_pair_set
+    t0 = time.time()
     candidates = set()
-    for bucket_ids in buckets.values():
-        if len(bucket_ids) > MAX_BUCKET_SIZE:
-            continue  # skip overly large buckets
-        for i in range(len(bucket_ids)):
-            for j in range(i + 1, len(bucket_ids)):
-                pair = (min(bucket_ids[i], bucket_ids[j]),
-                        max(bucket_ids[i], bucket_ids[j]))
-                candidates.add(pair)
 
-    logger.info("LSH: bucketing done in %.2fs (%d buckets, %d candidates)",
-                time.time() - t0, len(buckets), len(candidates))
+    if ml_pair_set is not None:
+        # Direct checking: iterate over ml_pair_set
+        for id1, id2 in ml_pair_set:
+            # Skip if either file not in token_data (should be already filtered)
+            if id1 not in file_to_buckets or id2 not in file_to_buckets:
+                continue
+            # Check if any bucket key is shared
+            # Since each file has at most bands bucket keys, we can intersect
+            # Use set intersection for efficiency
+            if set(file_to_buckets[id1]) & set(file_to_buckets[id2]):
+                candidates.add((id1, id2))
+        logger.info(
+            "LSH: direct checking done in %.2fs, %d candidates", time.time() - t0, len(candidates)
+        )
+    elif ml_df is not None:
+        # Direct checking using ml_df rows (no need to build ml_pair_set)
+        for _, row in ml_df.iterrows():
+            id1 = row["id1"]
+            id2 = row["id2"]
+            if id1 not in file_to_buckets or id2 not in file_to_buckets:
+                continue
+            if set(file_to_buckets[id1]) & set(file_to_buckets[id2]):
+                candidates.add((min(id1, id2), max(id1, id2)))
+        logger.info(
+            "LSH: direct checking (df) done in %.2fs, %d candidates",
+            time.time() - t0,
+            len(candidates),
+        )
+    else:
+        # Fallback: generate all candidate pairs (original algorithm)
+        total_buckets = len(buckets)
+        skipped_buckets = 0
+        total_pairs = 0
+        for bucket_key, bucket_ids in buckets.items():
+            bucket_size = len(bucket_ids)
+            if bucket_size > max_bucket_size:
+                skipped_buckets += 1
+                continue
+            for i in range(bucket_size):
+                for j in range(i + 1, bucket_size):
+                    pair = (min(bucket_ids[i], bucket_ids[j]), max(bucket_ids[i], bucket_ids[j]))
+                    candidates.add(pair)
+            total_pairs += bucket_size * (bucket_size - 1) // 2
+            del bucket_ids
+        logger.info(
+            "LSH: bucketing done in %.2fs (%d buckets, %d candidates, %d skipped large buckets)",
+            time.time() - t0,
+            total_buckets,
+            len(candidates),
+            skipped_buckets,
+        )
+
+    # Apply similarity filtering if threshold > 0
+    if sim_threshold > 0 and candidates:
+        filtered = set()
+        for id1, id2 in candidates:
+            idx1 = fid_to_index.get(id1)
+            idx2 = fid_to_index.get(id2)
+            if idx1 is None or idx2 is None:
+                continue
+            sim = minhash_lib.minhash_similarity(signatures[idx1], signatures[idx2])
+            if sim >= sim_threshold:
+                filtered.add((id1, id2))
+        logger.info(
+            "Similarity filtering: kept %d / %d pairs (threshold=%.2f)",
+            len(filtered),
+            len(candidates),
+            sim_threshold,
+        )
+        candidates = filtered
+
+    # Cleanup
+    buckets.clear()
+    file_to_buckets.clear()
 
     return candidates
 
@@ -178,6 +291,7 @@ def lsh_candidate_pairs(
 # ---------------------------------------------------------------------------
 # Pipeline evaluation
 # ---------------------------------------------------------------------------
+
 
 def evaluate_pipeline(
     predictions: dict[tuple, int],
@@ -202,7 +316,10 @@ def evaluate_pipeline(
     accuracy = (tp + tn) / max(tp + tn + fp + fn, 1)
 
     return {
-        "tp": tp, "fp": fp, "tn": tn, "fn": fn,
+        "tp": tp,
+        "fp": fp,
+        "tn": tn,
+        "fn": fn,
         "precision": float(precision),
         "recall": float(recall),
         "f1": float(f1),
@@ -216,15 +333,37 @@ def evaluate_pipeline(
 # Main pipeline
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Full clone detection pipeline")
     parser.add_argument("--data-dir", type=Path, default=Path("data/processed"))
     parser.add_argument("--intermediate-dir", type=Path, default=Path("data/intermediate"))
     parser.add_argument("--model-dir", type=Path, default=Path("artifacts/models"))
     parser.add_argument("--eval-dir", type=Path, default=Path("artifacts/evaluation"))
-    parser.add_argument("--lsh-hashes", type=int, default=128)
-    parser.add_argument("--lsh-bands", type=int, default=16)
+    parser.add_argument("--lsh-hashes", type=int, default=192)
+    parser.add_argument("--lsh-bands", type=int, default=32)
     parser.add_argument("--shingle-k", type=int, default=3)
+    parser.add_argument(
+        "--skip-lsh",
+        action="store_true",
+        default=False,
+        help="Skip LSH filtering and use all pairs",
+    )
+    parser.add_argument(
+        "--threshold", type=float, default=0.5, help="Classification threshold for clone detection"
+    )
+    parser.add_argument(
+        "--sim-threshold",
+        type=float,
+        default=0.0,
+        help="Minimum MinHash similarity for LSH candidate pairs (0.0 = no filtering)",
+    )
+    parser.add_argument(
+        "--max-bucket-size",
+        type=int,
+        default=5000,
+        help="Maximum LSH bucket size to prevent explosion",
+    )
     parser.add_argument("--normalized-dir", type=Path, default=Path("data/processed/normalized"))
     args = parser.parse_args()
 
@@ -265,36 +404,115 @@ def main() -> None:
     logger.info("=== Step 1: Type-1 Detection ===")
     step1_start = time.time()
     type1_pairs, type2_pairs, after_rules = detect_type1_type2(
-        rule_based_df, token_data, args.normalized_dir,
+        rule_based_df,
+        token_data,
+        args.normalized_dir,
     )
     step1_time = time.time() - step1_start
     logger.info("Type-1: %d detected in %.1fs", len(type1_pairs), step1_time)
+
+    # Evaluate rule-based detection (type-1 and type-2)
+    rule_metrics = {}
+    # Build mapping from pair to true label (1 or 2)
+    true_labels = {}
+    for _, row in rule_based_df.iterrows():
+        pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
+        true_labels[pair] = int(row["label"])
+    # Predicted labels: 1 for type1_pairs, 2 for type2_pairs, 0 otherwise
+    type1_set = set()
+    for _, row in type1_pairs.iterrows():
+        pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
+        type1_set.add(pair)
+    type2_set = set()
+    for _, row in type2_pairs.iterrows():
+        pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
+        type2_set.add(pair)
+
+    tp1 = fp1 = fn1 = tn1 = 0
+    tp2 = fp2 = fn2 = tn2 = 0
+    for pair, true in true_labels.items():
+        if pair in type1_set:
+            pred = 1
+        elif pair in type2_set:
+            pred = 2
+        else:
+            pred = 0
+        if true == 1:
+            if pred == 1:
+                tp1 += 1
+            else:
+                fn1 += 1
+        elif true == 2:
+            if pred == 2:
+                tp2 += 1
+            else:
+                fn2 += 1
+        # Note: false positives for rule-based detection are not applicable
+        # because we only evaluate on known clones (rule_based_df).
+
+    recall1 = tp1 / (tp1 + fn1) if (tp1 + fn1) > 0 else 0
+    recall2 = tp2 / (tp2 + fn2) if (tp2 + fn2) > 0 else 0
+    precision1 = tp1 / (tp1 + fp1) if (tp1 + fp1) > 0 else 0  # fp1 always 0
+    precision2 = tp2 / (tp2 + fp2) if (tp2 + fp2) > 0 else 0  # fp2 always 0
+
+    rule_metrics["type1_recall"] = float(recall1)
+    rule_metrics["type2_recall"] = float(recall2)
+    rule_metrics["type1_precision"] = float(precision1)
+    rule_metrics["type2_precision"] = float(precision2)
+    rule_metrics["type1_tp"] = int(tp1)
+    rule_metrics["type1_fn"] = int(fn1)
+    rule_metrics["type2_tp"] = int(tp2)
+    rule_metrics["type2_fn"] = int(fn2)
+    rule_metrics["type1_detected"] = len(type1_pairs)
+    rule_metrics["type2_detected"] = len(type2_pairs)
+
+    logger.info("Rule-based detection evaluation:")
+    logger.info("  Type-1: recall=%.4f (TP=%d, FN=%d)", recall1, tp1, fn1)
+    logger.info("  Type-2: recall=%.4f (TP=%d, FN=%d)", recall2, tp2, fn2)
 
     # Step 2: LSH candidate filtering for ML dataset
     logger.info("=== Step 2: LSH Candidate Filtering ===")
     step2_start = time.time()
 
-    ml_ids = list(set(ml_df["id1"].tolist() + ml_df["id2"].tolist()))
-    candidates = lsh_candidate_pairs(
-        ml_ids, token_data,
-        num_hashes=args.lsh_hashes,
-        bands=args.lsh_bands,
-        k=args.shingle_k,
-    )
-    step2_time = time.time() - step2_start
+    # Number of ML pairs
+    len_ml = len(ml_df)
 
-    # Build candidate set from ML dataset pairs
-    ml_pair_set = set()
-    for _, row in ml_df.iterrows():
-        pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
-        ml_pair_set.add(pair)
-
-    # LSH candidates that are also in our ML dataset
-    lsh_candidates = candidates & ml_pair_set
-    logger.info("LSH candidates: %d / %d pairs (%.1f%% reduction) in %.1fs",
-                len(lsh_candidates), len(ml_pair_set),
-                100 * (1 - len(lsh_candidates) / max(len(ml_pair_set), 1)),
-                step2_time)
+    if args.skip_lsh:
+        # Skip LSH filtering: all pairs are candidates
+        # Build candidate set from ML dataset pairs
+        ml_pair_set = set()
+        for _, row in ml_df.iterrows():
+            pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
+            ml_pair_set.add(pair)
+        candidates = ml_pair_set
+        lsh_candidates = ml_pair_set
+        step2_time = time.time() - step2_start
+        logger.info(
+            "LSH skipped: using all %d pairs as candidates in %.1fs",
+            len_ml,
+            step2_time,
+        )
+    else:
+        ml_ids = list(set(ml_df["id1"].tolist() + ml_df["id2"].tolist()))
+        candidates = lsh_candidate_pairs(
+            ml_ids,
+            token_data,
+            num_hashes=args.lsh_hashes,
+            bands=args.lsh_bands,
+            k=args.shingle_k,
+            max_bucket_size=args.max_bucket_size,
+            ml_df=ml_df,
+            sim_threshold=args.sim_threshold,
+        )
+        step2_time = time.time() - step2_start
+        lsh_candidates = candidates  # already filtered to ml_df
+        logger.info(
+            "LSH candidates: %d / %d pairs (%.1f%% reduction) in %.1fs",
+            len(lsh_candidates),
+            len_ml,
+            100 * (1 - len(lsh_candidates) / max(len_ml, 1)),
+            step2_time,
+        )
 
     # Step 3: Load features for LSH candidates
     logger.info("=== Step 3: Feature Loading ===")
@@ -305,8 +523,9 @@ def main() -> None:
     if features_path.exists():
         feat_df_full = pd.read_csv(features_path)
         feature_cols = [c for c in feat_df_full.columns if c not in ("label", "id1", "id2")]
-        logger.info("Pre-computed features: %d pairs, %d features",
-                     len(feat_df_full), len(feature_cols))
+        logger.info(
+            "Pre-computed features: %d pairs, %d features", len(feat_df_full), len(feature_cols)
+        )
 
         # Filter to LSH candidates only — this is the actual LSH reduction
         feat_df_full["pair_key"] = feat_df_full.apply(
@@ -315,9 +534,12 @@ def main() -> None:
         lsh_mask = feat_df_full["pair_key"].isin(lsh_candidates)
         feat_df = feat_df_full[lsh_mask].reset_index(drop=True)
         non_candidates = feat_df_full[~lsh_mask].reset_index(drop=True)
-        logger.info("LSH filtered: %d candidate pairs (from %d total, %.1f%% reduction)",
-                     len(feat_df), len(feat_df_full),
-                     100 * len(non_candidates) / max(len(feat_df_full), 1))
+        logger.info(
+            "LSH filtered: %d candidate pairs (from %d total, %.1f%% reduction)",
+            len(feat_df),
+            len(feat_df_full),
+            100 * len(non_candidates) / max(len(feat_df_full), 1),
+        )
     else:
         logger.error("Run feature engineering first")
         return
@@ -330,7 +552,12 @@ def main() -> None:
 
     X = feat_df[feature_cols].values.astype(np.float64)
     X = np.nan_to_num(X, nan=0.0, posinf=1.0, neginf=0.0)
-    y_pred = model.predict(X)
+    if hasattr(model, "predict_proba"):
+        proba = model.predict_proba(X)[:, 1]
+        y_pred = (proba >= args.threshold).astype(int)
+        logger.info("Using classification threshold: %.3f", args.threshold)
+    else:
+        y_pred = model.predict(X)
     step4_time = time.time() - step4_start
 
     # Build predictions dictionary
@@ -359,9 +586,12 @@ def main() -> None:
     # Add timing and LSH metrics
     metrics["type1_detected"] = len(type1_pairs)
     metrics["type2_detected"] = len(type2_pairs)
+    # Add rule-based detection metrics
+    for key, value in rule_metrics.items():
+        metrics[key] = value
     metrics["lsh_candidates"] = len(lsh_candidates)
-    metrics["lsh_total_pairs"] = len(ml_pair_set)
-    metrics["lsh_reduction_ratio"] = 1 - len(lsh_candidates) / max(len(ml_pair_set), 1)
+    metrics["lsh_total_pairs"] = len_ml
+    metrics["lsh_reduction_ratio"] = 1 - len(lsh_candidates) / max(len_ml, 1)
     metrics["step1_time_sec"] = step1_time
     metrics["step2_time_sec"] = step2_time
     metrics["step3_time_sec"] = step3_time
@@ -393,8 +623,12 @@ def main() -> None:
     # Pie chart: TP, FP, TN, FN
     fig, ax = plt.subplots(figsize=(6, 6))
     sizes = [metrics["tp"], metrics["fp"], metrics["tn"], metrics["fn"]]
-    labels = [f"TP ({metrics['tp']})", f"FP ({metrics['fp']})",
-              f"TN ({metrics['tn']})", f"FN ({metrics['fn']})"]
+    labels = [
+        f"TP ({metrics['tp']})",
+        f"FP ({metrics['fp']})",
+        f"TN ({metrics['tn']})",
+        f"FN ({metrics['fn']})",
+    ]
     colors = ["#4CAF50", "#FF9800", "#2196F3", "#F44336"]
     ax.pie(sizes, labels=labels, colors=colors, autopct="%1.1f%%")
     ax.set_title("Pipeline Results")

@@ -96,6 +96,43 @@ fn hash_mix(seed: u64, counter: u64) u64 {
     return h;
 }
 
+/// Batch MinHash signature computation for multiple files
+export fn minhash_signature_batch(
+    shingle_offsets: [*]const usize,
+    shingle_counts: [*]const usize,
+    shingles: [*]const u64,
+    file_count: usize,
+    num_hashes: usize,
+    seed: u64,
+    out_signatures: [*]u64,
+) void {
+    var file_idx: usize = 0;
+    while (file_idx < file_count) : (file_idx += 1) {
+        const offset = shingle_offsets[file_idx];
+        const count = shingle_counts[file_idx];
+        const file_shingles = shingles + offset;
+        const out_ptr = out_signatures + file_idx * num_hashes;
+        minhash_signature(file_shingles, count, num_hashes, seed, out_ptr);
+    }
+}
+
+/// Batch LSH bucket computation for multiple signatures
+export fn lsh_buckets_batch(
+    signatures: [*]const u64,
+    file_count: usize,
+    sig_len: usize,
+    bands: usize,
+    rows_per_band: usize,
+    out_buckets: [*]u64,
+) void {
+    var file_idx: usize = 0;
+    while (file_idx < file_count) : (file_idx += 1) {
+        const sig_ptr = signatures + file_idx * sig_len;
+        const out_ptr = out_buckets + file_idx * bands;
+        lsh_buckets(sig_ptr, sig_len, bands, rows_per_band, out_ptr);
+    }
+}
+
 test "minhash_signature basic" {
     const shingles = [_]u64{ 100, 200, 300, 400, 500 };
     var sig: [10]u64 = undefined;

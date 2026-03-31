@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -31,12 +32,11 @@ def load_test_data(
     feat_df = pd.read_csv(features_path)
     feature_cols = [c for c in feat_df.columns if c not in ("label", "id1", "id2")]
 
-    # Merge with test_df to get labels
-    merged = feat_df.merge(
-        test_df[["id1", "id2", "label"]],
-        on=["id1", "id2"],
-        how="inner"
-    )
+    # Use label column from features if present, otherwise merge with test_df
+    if "label" in feat_df.columns:
+        merged = feat_df
+    else:
+        merged = feat_df.merge(test_df[["id1", "id2", "label"]], on=["id1", "id2"], how="inner")
 
     X = merged[feature_cols].values.astype(np.float64)
     y = merged["label"].values.astype(np.int32)
@@ -178,22 +178,25 @@ def sweep_lsh_parameters(
             for shingle_k in shingle_k_list:
                 start = time.time()
 
-                metrics = simulate_lsh_performance(
-                    X, y, n_hashes, n_bands, shingle_k
-                )
+                metrics = simulate_lsh_performance(X, y, n_hashes, n_bands, shingle_k)
                 metrics["computation_time_sec"] = time.time() - start
 
                 # Compute F1 for LSH candidate filtering
-                f1 = 2 * metrics["precision"] * metrics["recall"] / (
-                    metrics["precision"] + metrics["recall"]
-                ) if (metrics["precision"] + metrics["recall"]) > 0 else 0
+                f1 = (
+                    2
+                    * metrics["precision"]
+                    * metrics["recall"]
+                    / (metrics["precision"] + metrics["recall"])
+                    if (metrics["precision"] + metrics["recall"]) > 0
+                    else 0
+                )
                 metrics["f1"] = float(f1)
 
                 # Balanced score: consider recall, precision, and speed
                 balanced_score = (
-                    0.4 * metrics["recall"] +
-                    0.3 * metrics["precision"] +
-                    0.3 * (1.0 / (1.0 + metrics["computation_time_sec"]))
+                    0.4 * metrics["recall"]
+                    + 0.3 * metrics["precision"]
+                    + 0.3 * (1.0 / (1.0 + metrics["computation_time_sec"]))
                 )
                 metrics["balanced_score"] = float(balanced_score)
 
@@ -245,9 +248,13 @@ def plot_lsh_sweep_results(
     # 1. Recall vs Precision scatter plot
     fig, ax = plt.subplots(figsize=(10, 8))
     scatter = ax.scatter(
-        df["recall"], df["precision"],
-        c=df["f1"], cmap="viridis",
-        s=100, alpha=0.7, edgecolors="black"
+        df["recall"],
+        df["precision"],
+        c=df["f1"],
+        cmap="viridis",
+        s=100,
+        alpha=0.7,
+        edgecolors="black",
     )
     ax.set_xlabel("Recall", fontsize=12)
     ax.set_ylabel("Precision", fontsize=12)
@@ -290,9 +297,12 @@ def plot_lsh_sweep_results(
     for n_bands in sorted(df["n_bands"].unique()):
         subset = df[df["n_bands"] == n_bands]
         ax.plot(
-            subset["n_hashes"], subset["recall"],
-            marker="o", label=f"Bands={n_bands}",
-            linewidth=2, markersize=6
+            subset["n_hashes"],
+            subset["recall"],
+            marker="o",
+            label=f"Bands={n_bands}",
+            linewidth=2,
+            markersize=6,
         )
     ax.set_xlabel("Number of Hash Functions", fontsize=11)
     ax.set_ylabel("Recall", fontsize=11)
@@ -306,9 +316,13 @@ def plot_lsh_sweep_results(
     # 4. Computation time analysis
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.scatter(
-        df["computation_time_sec"], df["recall"],
-        c=df["n_hashes"], cmap="plasma",
-        s=100, alpha=0.7, edgecolors="black"
+        df["computation_time_sec"],
+        df["recall"],
+        c=df["n_hashes"],
+        cmap="plasma",
+        s=100,
+        alpha=0.7,
+        edgecolors="black",
     )
     ax.set_xlabel("Computation Time (seconds)", fontsize=11)
     ax.set_ylabel("Recall", fontsize=11)
@@ -356,9 +370,13 @@ def plot_lsh_sweep_results(
     # 6. Reduction ratio vs Recall
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.scatter(
-        df["recall"], df["reduction_ratio"],
-        c=df["f1"], cmap="coolwarm",
-        s=100, alpha=0.7, edgecolors="black"
+        df["recall"],
+        df["reduction_ratio"],
+        c=df["f1"],
+        cmap="coolwarm",
+        s=100,
+        alpha=0.7,
+        edgecolors="black",
     )
     ax.set_xlabel("Recall", fontsize=11)
     ax.set_ylabel("Candidate Reduction Ratio", fontsize=11)
@@ -391,22 +409,17 @@ def recommend_parameters(
 
     # Filter by constraints
     valid = [
-        exp for exp in experiments
-        if exp["recall"] >= min_recall and
-           exp["precision"] >= min_precision and
-           exp["computation_time_sec"] <= max_time
+        exp
+        for exp in experiments
+        if exp["recall"] >= min_recall
+        and exp["precision"] >= min_precision
+        and exp["computation_time_sec"] <= max_time
     ]
 
     if not valid:
-        logger.warning(
-            "No configurations meet all constraints. "
-            "Relaxing constraints..."
-        )
+        logger.warning("No configurations meet all constraints. " "Relaxing constraints...")
         # Relax constraints and find best available
-        valid = [
-            exp for exp in experiments
-            if exp["recall"] >= min_recall * 0.9
-        ]
+        valid = [exp for exp in experiments if exp["recall"] >= min_recall * 0.9]
 
     if not valid:
         return {
@@ -433,9 +446,7 @@ def recommend_parameters(
             "min_precision": min_precision,
             "max_time_sec": max_time,
         },
-        "alternatives": sorted(
-            valid, key=lambda x: x["f1"], reverse=True
-        )[:3],
+        "alternatives": sorted(valid, key=lambda x: x["f1"], reverse=True)[:3],
     }
 
     return recommendation
@@ -445,46 +456,31 @@ def recommend_parameters(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="LSH parameter sweep")
+    parser.add_argument("--features-dir", type=Path, default=Path("data/intermediate/features"))
+    parser.add_argument("--data-dir", type=Path, default=Path("data/processed"))
+    parser.add_argument("--output-dir", type=Path, default=Path("artifacts/evaluation"))
     parser.add_argument(
-        "--features-dir", type=Path,
-        default=Path("data/intermediate/features")
+        "--hash-range", type=int, nargs=3, default=[64, 256, 64], help="Hash range: start end step"
     )
     parser.add_argument(
-        "--data-dir", type=Path,
-        default=Path("data/processed")
+        "--bands-range", type=int, nargs=3, default=[2, 32, 2], help="Bands range: start end step"
     )
     parser.add_argument(
-        "--output-dir", type=Path,
-        default=Path("artifacts/evaluation")
-    )
-    parser.add_argument(
-        "--hash-range", type=int, nargs=3,
-        default=[64, 256, 64],
-        help="Hash range: start end step"
-    )
-    parser.add_argument(
-        "--bands-range", type=int, nargs=3,
-        default=[8, 32, 8],
-        help="Bands range: start end step"
-    )
-    parser.add_argument(
-        "--shingle-k-range", type=int, nargs=3,
+        "--shingle-k-range",
+        type=int,
+        nargs=3,
         default=[3, 5, 1],
-        help="Shingle k range: start end step"
+        help="Shingle k range: start end step",
+    )
+    parser.add_argument("--min-recall", type=float, default=0.90, help="Minimum acceptable recall")
+    parser.add_argument(
+        "--min-precision", type=float, default=0.50, help="Minimum acceptable precision"
     )
     parser.add_argument(
-        "--min-recall", type=float, default=0.90,
-        help="Minimum acceptable recall"
-    )
-    parser.add_argument(
-        "--min-precision", type=float, default=0.50,
-        help="Minimum acceptable precision"
-    )
-    parser.add_argument(
-        "--max-time", type=float, default=5.0,
-        help="Maximum acceptable computation time (seconds)"
+        "--max-time", type=float, default=5.0, help="Maximum acceptable computation time (seconds)"
     )
     args = parser.parse_args()
 
@@ -501,7 +497,9 @@ def main() -> None:
         merged, X, y = load_test_data(args.features_dir, test_df)
         logger.info(
             "Loaded %d samples (%d positive, %d negative)",
-            len(y), int(y.sum()), len(y) - int(y.sum())
+            len(y),
+            int(y.sum()),
+            len(y) - int(y.sum()),
         )
     except FileNotFoundError as e:
         logger.error(str(e))
@@ -509,7 +507,8 @@ def main() -> None:
 
     # Run parameter sweep
     results = sweep_lsh_parameters(
-        X, y,
+        X,
+        y,
         hash_range=tuple(args.hash_range),
         bands_range=tuple(args.bands_range),
         shingle_k_range=tuple(args.shingle_k_range),
@@ -554,17 +553,23 @@ def main() -> None:
 
     print("\nBest by individual metrics:")
     if results["best_by_recall"]:
-        print(f"  Recall: {results['best_by_recall']['recall']:.4f} "
-              f"(hashes={results['best_by_recall']['n_hashes']}, "
-              f"bands={results['best_by_recall']['n_bands']})")
+        print(
+            f"  Recall: {results['best_by_recall']['recall']:.4f} "
+            f"(hashes={results['best_by_recall']['n_hashes']}, "
+            f"bands={results['best_by_recall']['n_bands']})"
+        )
     if results["best_by_precision"]:
-        print(f"  Precision: {results['best_by_precision']['precision']:.4f} "
-              f"(hashes={results['best_by_precision']['n_hashes']}, "
-              f"bands={results['best_by_precision']['n_bands']})")
+        print(
+            f"  Precision: {results['best_by_precision']['precision']:.4f} "
+            f"(hashes={results['best_by_precision']['n_hashes']}, "
+            f"bands={results['best_by_precision']['n_bands']})"
+        )
     if results["best_by_f1"]:
-        print(f"  F1: {results['best_by_f1']['f1']:.4f} "
-              f"(hashes={results['best_by_f1']['n_hashes']}, "
-              f"bands={results['best_by_f1']['n_bands']})")
+        print(
+            f"  F1: {results['best_by_f1']['f1']:.4f} "
+            f"(hashes={results['best_by_f1']['n_hashes']}, "
+            f"bands={results['best_by_f1']['n_bands']})"
+        )
 
     print("Done.")
 
