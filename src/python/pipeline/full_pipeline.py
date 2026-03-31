@@ -747,19 +747,27 @@ def main() -> None:
     all_pairs = list(ground_truth.keys())
     y_true = np.array([ground_truth_all[p] for p in all_pairs])
     y_pred = np.array([predictions.get(p, 0) for p in all_pairs])
-    # Compute confusion matrix
-    cm = confusion_matrix(y_true, y_pred, labels=[0,1,2,3])
+
+    # Get unique classes in predictions
+    unique_classes = sorted(set(y_pred) | set(y_true))
     class_names = ["Non-clone", "Type-1", "Type-2", "Type-3"]
+
+    # Compute confusion matrix with only present classes
+    cm = confusion_matrix(y_true, y_pred, labels=unique_classes)
+    cm_class_names = [class_names[i] for i in unique_classes if i < len(class_names)]
+
     # Save confusion matrix
     from src.python.evaluation.plots import plot_confusion_matrix
     plot_confusion_matrix(
         cm,
         plots_dir / "confusion_matrix_multiclass.png",
-        class_names=class_names,
+        class_names=cm_class_names,
         title="Confusion Matrix (Full Pipeline)",
     )
-    # Save classification report
-    report = classification_report(y_true, y_pred, target_names=class_names, output_dict=True)
+
+    # Save classification report (only for present classes)
+    report = classification_report(y_true, y_pred, labels=unique_classes,
+                                   target_names=cm_class_names, output_dict=True)
     save_json(report, args.eval_dir / "classification_report.json")
     logger.info("Multi-class confusion matrix and classification report saved")
 
