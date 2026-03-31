@@ -238,25 +238,27 @@ def plot_confusion_matrix(
     cmap: str = "Blues",
 ) -> None:
     """
-    Plot confusion matrix heatmap.
+    Plot confusion matrix heatmap for any number of classes.
 
     Args:
-        cm: 2x2 confusion matrix array
+        cm: Confusion matrix array (n_classes x n_classes)
         save_path: Path to save the plot
-        class_names: Names of classes (default: ["NON", "Clone"])
+        class_names: Names of classes (default: ["Class 0", "Class 1", ...])
         title: Plot title
         cmap: Colormap name
     """
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
+    n_classes = cm.shape[0]
     if class_names is None:
-        class_names = ["NON", "Clone"]
+        class_names = [f"Class {i}" for i in range(n_classes)]
+    assert len(class_names) == n_classes
 
-    fig, ax = plt.subplots(figsize=(6, 5))
+    fig, ax = plt.subplots(figsize=(max(6, n_classes), max(5, n_classes * 0.8)))
     im = ax.imshow(cm, interpolation="nearest", cmap=cmap)
 
-    ax.set_xticks([0, 1])
-    ax.set_yticks([0, 1])
+    ax.set_xticks(range(n_classes))
+    ax.set_yticks(range(n_classes))
     ax.set_xticklabels(class_names, fontsize=11)
     ax.set_yticklabels(class_names, fontsize=11)
     ax.set_xlabel("Predicted", fontsize=11)
@@ -265,20 +267,19 @@ def plot_confusion_matrix(
 
     # Add text annotations
     thresh = cm.max() / 2.0
-    for i in range(2):
-        for j in range(2):
+    for i in range(n_classes):
+        for j in range(n_classes):
             ax.text(
                 j, i, f"{cm[i, j]:d}",
                 ha="center", va="center",
                 color="white" if cm[i, j] > thresh else "black",
-                fontsize=16
+                fontsize=12 if n_classes <= 5 else 9
             )
 
     fig.colorbar(im, ax=ax, shrink=0.8)
     plt.tight_layout()
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
-
 
 def plot_cv_variance(
     fold_results: list,

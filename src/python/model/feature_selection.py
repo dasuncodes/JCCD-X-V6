@@ -237,6 +237,9 @@ def main() -> None:
                        choices=["xgboost", "random_forest", "logistic_regression", "linear_svm", "knn"])
     parser.add_argument("--cv", type=int, default=5, help="Number of CV folds")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--output-model-dir", type=Path, default=Path("artifacts/models"))
+    parser.add_argument("--selected-features-file", type=Path, default=Path("artifacts/models/selected_features.json"))
+    parser.add_argument("--retrain", action="store_true", default=True, help="Retrain model on selected features and save")
     args = parser.parse_args()
 
     # Load features
@@ -276,38 +279,32 @@ def main() -> None:
         X, y, feature_cols, rfe_results, model, cv=args.cv,
     )
 
-    # Save results
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    save_json(rfe_results, args.output_dir / "rfe_results.json")
-    save_json(comparison, args.output_dir / "feature_subset_comparison.json")
-
-    # Plot results
-    plots_dir = args.output_dir / "plots" / "rfe"
-    plot_rfe_results(rfe_results, plots_dir / "rfe_curve.png")
-
-    # Plot feature importance with optimal features
+    # Retrain model on selected features
     optimal_n = rfe_results.get("optimal_n_features")
-    if optimal_n and rfe_results["experiments"]:
+    if optimal_n and rfe_results["experiments"] and args.retrain:
         # Find experiment with optimal features
+        selected_indices = None
         for exp in rfe_results["experiments"]:
             if exp["n_features"] == optimal_n:
-                # Get feature importance from model trained on selected features
                 selected_indices = exp["selected_indices"]
-                model.fit(X[:, selected_indices], y)
-
-                if hasattr(model, "feature_importances_"):
-                    importance = {}
-                    for i, idx in enumerate(selected_indices):
-                        importance[feature_cols[idx]] = float(model.feature_importances_[i])
-
-                    plot_feature_importance(
-                        importance,
-                        plots_dir / "optimal_feature_importance.png",
-                        title=f"Feature Importance (Top {optimal_n} Features)",
-                        top_n=optimal_n,
-                    )
                 break
-
+        if selected_indices is not None:
+            # Retrain model on selected features
+            model_retrained = get_models()[args.model_name]
+            X_selected = X[:, selected_indices]
+            model_retrained.fit(X_selected, y)
+            
+            # Save retrained model
+            args.output_model_dir.mkdir(parents=True, exist_ok=True)
+            model_path = args.output_model_dir / "best_model_rfe.joblib"
+            joblib.dump(model_retrained, model_path)
+            logger.info("Saved retrained model with %d features to %s", len(selected_indices), model_path)
+            
+            # Save selected feature names
+            selected_feature_names = [feature_cols[i] for i in selected_indices]
+            args.selected_features_file.parent.mkdir(parents=True, exist_ok=True)
+            save_json(selected_feature_names, args.selected_features_file)
+            logger.info("Saved selected feature names to %s", args.selected_features_file)
     logger.info("Results saved to %s", args.output_dir)
     logger.info("Plots saved to %s", plots_dir)
 

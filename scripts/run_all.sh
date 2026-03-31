@@ -59,11 +59,25 @@ echo "  Step 5: ML Training"
 echo "=========================================="
 bash scripts/run_training.sh
 
+# Step 5.5: Feature Selection (RFE)
+echo "=========================================="
+echo "  Step 5.5: Feature Selection (RFE)"
+echo "=========================================="
+bash scripts/run_rfe.sh
+
+
 # Step 6: Full Pipeline
 echo "=========================================="
 echo "  Step 6: Full Pipeline Evaluation"
 echo "=========================================="
 bash scripts/run_pipeline.sh
+
+# Step 6.5: Ablation Study (on selected features)
+echo "=========================================="
+echo "  Step 6.5: Ablation Study (Selected Features)"
+echo "=========================================="
+    bash scripts/run_ablation.sh
+
 
 # Optional Analysis Modules (Phases 7-11)
 if [[ "$RUN_ANALYSIS" == "true" ]]; then
@@ -72,17 +86,17 @@ if [[ "$RUN_ANALYSIS" == "true" ]]; then
     echo "=========================================="
     echo ""
 
-    # Phase 5: Feature Pruning (RFE)
-    echo "=========================================="
-    echo "  Phase 5: Feature Pruning (RFE)"
-    echo "=========================================="
-    bash scripts/run_rfe.sh
-
-    # Phase 6: Ablation Study
-    echo "=========================================="
-    echo "  Phase 6: Ablation Study"
-    echo "=========================================="
-    bash scripts/run_ablation.sh
+# Moved earlier (RFE after training, ablation after pipeline)
+# Moved earlier (RFE after training, ablation after pipeline)
+# Moved earlier (RFE after training, ablation after pipeline)
+# Moved earlier (RFE after training, ablation after pipeline)
+# Moved earlier (RFE after training, ablation after pipeline)
+# Moved earlier (RFE after training, ablation after pipeline)
+# Moved earlier (RFE after training, ablation after pipeline)
+# Moved earlier (RFE after training, ablation after pipeline)
+# Moved earlier (RFE after training, ablation after pipeline)
+# Moved earlier (RFE after training, ablation after pipeline)
+# Moved earlier (RFE after training, ablation after pipeline)
 
     # Phase 7: LSH Parameter Sweep
     echo "=========================================="

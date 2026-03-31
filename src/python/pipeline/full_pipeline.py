@@ -3,6 +3,7 @@
 import argparse
 import logging
 import pickle
+import json
 import time
 from pathlib import Path
 
@@ -482,6 +483,19 @@ def main() -> None:
     model_name = joblib.load(args.model_dir / "best_model_name.joblib")
     logger.info("Loaded model: %s", model_name)
 
+    # Load selected features and RFE model if available
+    selected_features = None
+    selected_features_path = args.model_dir / "selected_features.json"
+    if selected_features_path.exists():
+        with open(selected_features_path, 'r') as f:
+            selected_features = json.load(f)
+        logger.info("Loaded selected features (%d features)", len(selected_features))
+        # Optionally load RFE model
+        rfe_model_path = args.model_dir / "best_model_rfe.joblib"
+        if rfe_model_path.exists():
+            model = joblib.load(rfe_model_path)
+            logger.info("Loaded RFE-retrained model from %s", rfe_model_path)
+
     # Load token data
     logger.info("Loading token data...")
     with open(args.intermediate_dir / "token_data.pkl", "rb") as f:
@@ -663,6 +677,8 @@ def main() -> None:
     if hasattr(model, "predict_proba"):
         proba = model.predict_proba(X)[:, 1]
         y_pred = (proba >= args.threshold).astype(int)
+        # Map binary predictions to clone type labels (0 -> non-clone, 1 -> type-3)
+        y_pred = np.where(y_pred == 1, 3, 0)
         logger.info("Using classification threshold: %.3f", args.threshold)
     else:
         y_pred = model.predict(X)
@@ -679,6 +695,12 @@ def main() -> None:
         pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
         predictions[pair] = 0
 
+    # Add rule-based predictions (type-1 and type-2)
+    for pair in type1_set:
+        predictions[pair] = 1
+    for pair in type2_set:
+        predictions[pair] = 2
+
     # Step 5: Full pipeline evaluation
     logger.info("=== Step 5: Evaluation ===")
 
@@ -687,6 +709,12 @@ def main() -> None:
     for _, row in ml_df.iterrows():
         pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
         ground_truth[pair] = int(row["binary_label"])
+
+    # Ground truth for all pairs (including type-1, type-2)
+    ground_truth_all = {}
+    for _, row in test_df.iterrows():
+        pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
+        ground_truth_all[pair] = int(row["label"])
 
     metrics = evaluate_pipeline(predictions, ground_truth)
     total_time = time.time() - total_start
@@ -708,6 +736,28 @@ def main() -> None:
 
     args.eval_dir.mkdir(parents=True, exist_ok=True)
     save_json(metrics, args.eval_dir / "pipeline_metrics.json")
+
+    # Multi-class evaluation (Non, Type-1, Type-2, Type-3)
+    # Build ground truth and predictions for all pairs
+    from sklearn.metrics import confusion_matrix, classification_report
+    all_pairs = list(ground_truth.keys())
+    y_true = np.array([ground_truth_all[p] for p in all_pairs])
+    y_pred = np.array([predictions.get(p, 0) for p in all_pairs])
+    # Compute confusion matrix
+    cm = confusion_matrix(y_true, y_pred, labels=[0,1,2,3])
+    class_names = ["Non-clone", "Type-1", "Type-2", "Type-3"]
+    # Save confusion matrix
+    from src.python.evaluation.plots import plot_confusion_matrix
+    plot_confusion_matrix(
+        cm,
+        plots_dir / "confusion_matrix_multiclass.png",
+        class_names=class_names,
+        title="Confusion Matrix (Full Pipeline)",
+    )
+    # Save classification report
+    report = classification_report(y_true, y_pred, target_names=class_names, output_dict=True)
+    save_json(report, args.eval_dir / "classification_report.json")
+    logger.info("Multi-class confusion matrix and classification report saved")
 
     # Plots
     plots_dir = args.eval_dir / "plots" / "pipeline"

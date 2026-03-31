@@ -1,6 +1,7 @@
 """Ablation studies for JCCD-X pipeline."""
 
 import argparse
+import json
 import logging
 import time
 from pathlib import Path
@@ -339,6 +340,7 @@ def main() -> None:
     parser.add_argument("--model-name", type=str, default="xgboost")
     parser.add_argument("--cv", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--feature-selection", type=Path, default=None, help="Path to selected features JSON file (from RFE)")
     args = parser.parse_args()
 
     # Load features
@@ -349,6 +351,18 @@ def main() -> None:
 
     train_df = pd.read_csv(train_path)
     feature_cols = [c for c in train_df.columns if c not in ("label", "id1", "id2")]
+    # Load selected features if provided
+    if args.feature_selection is not None and args.feature_selection.exists():
+        with open(args.feature_selection, 'r') as f:
+            selected_features = json.load(f)
+        logger.info("Using %d selected features from %s", len(selected_features), args.feature_selection)
+        # Intersect with available features
+        selected_features = [f for f in selected_features if f in feature_cols]
+        if len(selected_features) == 0:
+            logger.error("No selected features found in feature_cols")
+            return
+        feature_cols = selected_features
+        logger.info("Filtered to %d selected features", len(feature_cols))
     X = train_df[feature_cols].values.astype(np.float64)
     y = train_df["label"].values.astype(np.int32)
     X = np.nan_to_num(X, nan=0.0, posinf=1.0, neginf=0.0)
