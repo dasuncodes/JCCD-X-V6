@@ -25,12 +25,13 @@ def get_models() -> dict:
             random_state=42,
         ),
         "logistic_regression": LogisticRegression(
-            max_iter=1000,
+            max_iter=5000,  # Increased from 1000 for better convergence
             C=1.0,
             random_state=42,
+            solver='lbfgs',
         ),
         "linear_svm": LinearSVC(
-            max_iter=2000,
+            max_iter=5000,  # Increased from 2000 for better convergence
             C=1.0,
             random_state=42,
         ),
