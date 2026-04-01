@@ -18,7 +18,7 @@ echo ""
 RUN_ANALYSIS="${RUN_ANALYSIS:-false}"
 if [[ "${1:-}" == "--with-analysis" ]] || [[ "${RUN_ANALYSIS}" == "true" ]]; then
     RUN_ANALYSIS=true
-    echo "Running with analysis modules (Phases 7-11)"
+    echo "Running with analysis modules (Phases 8-12)"
     echo ""
 fi
 
@@ -78,11 +78,7 @@ echo "  Step 6.5: Ablation Study (Selected Features)"
 echo "=========================================="
 bash scripts/run_ablation.sh
 
-# Step 7: Comprehensive Evaluation (Core Metrics & Plots)
-echo "=========================================="
-echo "  Step 7: Comprehensive Evaluation"
-echo "=========================================="
-bash scripts/run_comprehensive_evaluation.sh
+
 
 
 # Optional Analysis Modules (Phases 8-12)
@@ -136,7 +132,7 @@ echo "Results:"
 echo "  - Metrics: artifacts/evaluation/*.json"
 echo "  - Models:  artifacts/models/"
 echo "  - Plots:   artifacts/evaluation/plots/"
-echo "  - Comprehensive Eval: artifacts/evaluation_comprehensive/"
+echo ""
 echo ""
 echo "To run with analysis modules:"
 echo "  bash scripts/run_all.sh --with-analysis"

@@ -1,13 +1,24 @@
 """Centralized plotting functions for JCCD-X pipeline."""
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+from sklearn.metrics import (
+    precision_score,
+    recall_score,
+    f1_score,
+    average_precision_score,
+    roc_curve,
+    roc_auc_score,
+    precision_recall_curve,
+    confusion_matrix,
+)
 
 
 def plot_roc_curves(
@@ -35,9 +46,12 @@ def plot_roc_curves(
         if "fpr" in fold and "tpr" in fold:
             auc = fold.get("roc_auc", 0)
             ax.plot(
-                fold["fpr"], fold["tpr"],
-                color=colors[i], linewidth=1.5, alpha=0.6,
-                label=f"Fold {i+1} (AUC = {auc:.3f})" if auc > 0 else f"Fold {i+1}"
+                fold["fpr"],
+                fold["tpr"],
+                color=colors[i],
+                linewidth=1.5,
+                alpha=0.6,
+                label=f"Fold {i+1} (AUC = {auc:.3f})" if auc > 0 else f"Fold {i+1}",
             )
 
     # Plot mean ROC curve if data is available
@@ -56,9 +70,12 @@ def plot_roc_curves(
             mean_tpr = np.mean(mean_tpr, axis=0)
             mean_auc = fold_results[0].get("roc_auc_mean", 0)
             ax.plot(
-                mean_fpr, mean_tpr,
-                color="navy", linewidth=2.5, linestyle="--",
-                label=f"Mean ROC (AUC = {mean_auc:.3f})" if mean_auc > 0 else "Mean ROC"
+                mean_fpr,
+                mean_tpr,
+                color="navy",
+                linewidth=2.5,
+                linestyle="--",
+                label=f"Mean ROC (AUC = {mean_auc:.3f})" if mean_auc > 0 else "Mean ROC",
             )
 
     # Plot diagonal (random classifier)
@@ -102,9 +119,12 @@ def plot_pr_curves(
         if "precision" in fold and "recall" in fold:
             auc = fold.get("pr_auc", 0)
             ax.plot(
-                fold["recall"], fold["precision"],
-                color=colors[i], linewidth=1.5, alpha=0.6,
-                label=f"Fold {i+1} (AP = {auc:.3f})" if auc > 0 else f"Fold {i+1}"
+                fold["recall"],
+                fold["precision"],
+                color=colors[i],
+                linewidth=1.5,
+                alpha=0.6,
+                label=f"Fold {i+1} (AP = {auc:.3f})" if auc > 0 else f"Fold {i+1}",
             )
 
     # Plot mean PR curve if data is available
@@ -123,9 +143,12 @@ def plot_pr_curves(
             mean_precision = np.mean(mean_precision, axis=0)
             mean_ap = fold_results[0].get("pr_auc_mean", 0)
             ax.plot(
-                mean_recall, mean_precision,
-                color="navy", linewidth=2.5, linestyle="--",
-                label=f"Mean AP = {mean_ap:.3f}" if mean_ap > 0 else "Mean PR"
+                mean_recall,
+                mean_precision,
+                color="navy",
+                linewidth=2.5,
+                linestyle="--",
+                label=f"Mean AP = {mean_ap:.3f}" if mean_ap > 0 else "Mean PR",
             )
 
     ax.set_xlim([0.0, 1.0])
@@ -270,16 +293,20 @@ def plot_confusion_matrix(
     for i in range(n_classes):
         for j in range(n_classes):
             ax.text(
-                j, i, f"{cm[i, j]:d}",
-                ha="center", va="center",
+                j,
+                i,
+                f"{cm[i, j]:d}",
+                ha="center",
+                va="center",
                 color="white" if cm[i, j] > thresh else "black",
-                fontsize=12 if n_classes <= 5 else 9
+                fontsize=12 if n_classes <= 5 else 9,
             )
 
     fig.colorbar(im, ax=ax, shrink=0.8)
     plt.tight_layout()
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
+
 
 def plot_cv_variance(
     fold_results: list,
@@ -308,7 +335,9 @@ def plot_cv_variance(
         values = [f.get(metric, 0) for f in fold_results if metric in f]
         if values:
             data.append(values)
-            labels.append(f"{metric.upper()}\n(mean={np.mean(values):.3f}, std={np.std(values):.3f})")
+            labels.append(
+                f"{metric.upper()}\n(mean={np.mean(values):.3f}, std={np.std(values):.3f})"
+            )
 
     if not data:
         return
@@ -375,13 +404,15 @@ def plot_feature_distributions(
         pos_data = pos_data[np.isfinite(pos_data)]
         neg_data = neg_data[np.isfinite(neg_data)]
 
-        data_to_plot = [neg_data, pos_data] if len(neg_data) > 0 and len(pos_data) > 0 else [pos_data]
+        data_to_plot = (
+            [neg_data, pos_data] if len(neg_data) > 0 and len(pos_data) > 0 else [pos_data]
+        )
         labels_plot = ["NON", "Type-3"] if len(data_to_plot) == 2 else ["Type-3"]
 
         bp = ax.boxplot(data_to_plot, patch_artist=True, labels=labels_plot)
 
         # Color the boxes
-        colors = ["#607D8B", "#4CAF50"][:len(data_to_plot)]
+        colors = ["#607D8B", "#4CAF50"][: len(data_to_plot)]
         for patch, color in zip(bp["boxes"], colors):
             patch.set_facecolor(color)
             patch.set_alpha(0.6)
@@ -428,8 +459,10 @@ def plot_ablation_results(
     fig, ax = plt.subplots(figsize=(10, 6))
 
     # Color: baseline in green, ablated in orange/red
-    colors = ["#4CAF50" if "full" in name.lower() or "baseline" in name.lower() else "#FF9800"
-              for name in names]
+    colors = [
+        "#4CAF50" if "full" in name.lower() or "baseline" in name.lower() else "#FF9800"
+        for name in names
+    ]
 
     bars = ax.bar(names, values, color=colors, edgecolor="black", alpha=0.8)
 
@@ -444,7 +477,9 @@ def plot_ablation_results(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height() + 0.01,
             f"{val:.4f}",
-            ha="center", va="bottom", fontsize=9
+            ha="center",
+            va="bottom",
+            fontsize=9,
         )
 
     plt.tight_layout()
@@ -477,7 +512,9 @@ def plot_lsh_recall_vs_threshold(
     color1 = "#2196F3"
     ax1.set_xlabel("LSH Threshold", fontsize=11)
     ax1.set_ylabel("Recall", color=color1, fontsize=11)
-    ax1.plot(thresholds, recalls, color=color1, marker="o", linewidth=2, markersize=8, label="Recall")
+    ax1.plot(
+        thresholds, recalls, color=color1, marker="o", linewidth=2, markersize=8, label="Recall"
+    )
     ax1.tick_params(axis="y", labelcolor=color1)
     ax1.grid(True, alpha=0.3)
 
@@ -485,7 +522,15 @@ def plot_lsh_recall_vs_threshold(
     ax2 = ax1.twinx()
     color2 = "#FF9800"
     ax2.set_ylabel("Precision", color=color2, fontsize=11)
-    ax2.plot(thresholds, precisions, color=color2, marker="s", linewidth=2, markersize=8, label="Precision")
+    ax2.plot(
+        thresholds,
+        precisions,
+        color=color2,
+        marker="s",
+        linewidth=2,
+        markersize=8,
+        label="Precision",
+    )
     ax2.tick_params(axis="y", labelcolor=color2)
 
     # Combined legend
@@ -530,9 +575,11 @@ def plot_runtime_per_stage(
     # Add value labels
     for bar, time_val in zip(bars, times):
         ax.text(
-            bar.get_width() + 0.1, bar.get_y() + bar.get_height() / 2,
+            bar.get_width() + 0.1,
+            bar.get_y() + bar.get_height() / 2,
             f"{time_val:.1f}s",
-            va="center", fontsize=9
+            va="center",
+            fontsize=9,
         )
 
     plt.tight_layout()
@@ -575,9 +622,454 @@ def plot_memory_usage(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height() + max(memory_mb) * 0.01,
             f"{mem_val:.1f} MB",
-            ha="center", va="bottom", fontsize=9
+            ha="center",
+            va="bottom",
+            fontsize=9,
         )
 
     plt.tight_layout()
     fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+
+
+def plot_model_comparison_bar(
+    model_results: dict,
+    save_path: Path,
+    metric: str = "f1",
+    title: Optional[str] = None,
+) -> None:
+    """Plot bar chart comparing models by a specific metric."""
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    models = list(model_results.keys())
+    values = [model_results[m].get(metric, 0) for m in models]
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    colors = plt.cm.tab10(np.linspace(0, 1, len(models)))
+    bars = ax.bar(models, values, color=colors, edgecolor="black", alpha=0.8, width=0.6)
+
+    ax.set_ylabel(metric.upper(), fontsize=12)
+    ax.set_xlabel("Model", fontsize=12)
+    ax.set_title(title or f"Model Comparison by {metric.upper()}", fontsize=14)
+    ax.tick_params(axis="x", rotation=45, labelsize=10)
+    ax.set_ylim(0, max(values) * 1.15)
+    ax.grid(True, alpha=0.3, axis="y")
+
+    for bar, val in zip(bars, values):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.01,
+            f"{val:.4f}",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontweight="bold",
+        )
+
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_model_comparison_scatter(
+    model_results: dict,
+    save_path: Path,
+) -> None:
+    """Plot scatter plot: Training Time vs F1 Score."""
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    models = list(model_results.keys())
+    times = [model_results[m].get("training_time_sec", 0) for m in models]
+    f1_scores = [model_results[m].get("f1", 0) for m in models]
+    auc_scores = [model_results[m].get("roc_auc", 0) for m in models]
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+    scatter = ax.scatter(
+        times,
+        f1_scores,
+        s=np.array(auc_scores) * 300,
+        c=np.arange(len(models)),
+        cmap="tab10",
+        alpha=0.7,
+        edgecolors="black",
+        linewidths=1.5,
+    )
+
+    for i, model in enumerate(models):
+        ax.annotate(
+            model.replace("_", " ").title(),
+            (times[i], f1_scores[i]),
+            xytext=(5, 5),
+            textcoords="offset points",
+            fontsize=10,
+            fontweight="bold",
+        )
+
+    ax.set_xlabel("Training Time (seconds)", fontsize=12)
+    ax.set_ylabel("F1 Score", fontsize=12)
+    ax.set_title("Model Efficiency: Training Time vs Performance", fontsize=14)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_multi_model_roc_curves(
+    model_results: dict,
+    y_true: np.ndarray,
+    y_proba_dict: dict,
+    save_path: Path,
+    title: str = "ROC Curves - Model Comparison",
+) -> None:
+    """Plot ROC curves for multiple models on the same graph."""
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(10, 10))
+    colors = plt.cm.tab10(np.linspace(0, 1, len(model_results)))
+
+    for i, (model_name, y_proba) in enumerate(y_proba_dict.items()):
+        if y_proba is None:
+            continue
+        fpr, tpr, _ = roc_curve(y_true, y_proba)
+        auc = roc_auc_score(y_true, y_proba)
+        ax.plot(
+            fpr,
+            tpr,
+            color=colors[i],
+            linewidth=2,
+            alpha=0.8,
+            label=f"{model_name.replace('_', ' ').title()} (AUC = {auc:.3f})",
+        )
+
+    ax.plot([0, 1], [0, 1], "k--", linewidth=1, alpha=0.5, label="Random Classifier")
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.05])
+    ax.set_xlabel("False Positive Rate", fontsize=12)
+    ax.set_ylabel("True Positive Rate", fontsize=12)
+    ax.set_title(title, fontsize=14)
+    ax.legend(loc="lower right", fontsize=10)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_multi_model_pr_curves(
+    model_results: dict,
+    y_true: np.ndarray,
+    y_proba_dict: dict,
+    save_path: Path,
+    title: str = "Precision-Recall Curves - Model Comparison",
+) -> None:
+    """Plot Precision-Recall curves for multiple models on the same graph."""
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(10, 10))
+    colors = plt.cm.tab10(np.linspace(0, 1, len(model_results)))
+
+    for i, (model_name, y_proba) in enumerate(y_proba_dict.items()):
+        if y_proba is None:
+            continue
+        precision, recall, _ = precision_recall_curve(y_true, y_proba)
+        ap = average_precision_score(y_true, y_proba)
+        ax.plot(
+            recall,
+            precision,
+            color=colors[i],
+            linewidth=2,
+            alpha=0.8,
+            label=f"{model_name.replace('_', ' ').title()} (AP = {ap:.3f})",
+        )
+
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.05])
+    ax.set_xlabel("Recall", fontsize=12)
+    ax.set_ylabel("Precision", fontsize=12)
+    ax.set_title(title, fontsize=14)
+    ax.legend(loc="lower left", fontsize=10)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_threshold_sensitivity(
+    y_true: np.ndarray,
+    y_proba: np.ndarray,
+    save_path: Path,
+    title: str = "Threshold Sensitivity Analysis",
+) -> None:
+    """Plot precision, recall, and F1 vs classification threshold."""
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    thresholds = np.linspace(0.01, 0.99, 100)
+    precisions, recalls, f1_scores = [], [], []
+
+    for thresh in thresholds:
+        y_pred = (y_proba >= thresh).astype(int)
+        p = precision_score(y_true, y_pred, zero_division=0)
+        r = recall_score(y_true, y_pred, zero_division=0)
+        f1 = f1_score(y_true, y_pred, zero_division=0)
+        precisions.append(p)
+        recalls.append(r)
+        f1_scores.append(f1)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(
+        thresholds,
+        precisions,
+        label="Precision",
+        linewidth=2,
+        color="#2196F3",
+        marker="o",
+        markersize=3,
+    )
+    ax.plot(
+        thresholds, recalls, label="Recall", linewidth=2, color="#4CAF50", marker="s", markersize=3
+    )
+    ax.plot(
+        thresholds,
+        f1_scores,
+        label="F1 Score",
+        linewidth=2,
+        color="#FF9800",
+        marker="^",
+        markersize=3,
+    )
+
+    optimal_idx = np.argmax(f1_scores)
+    optimal_thresh = thresholds[optimal_idx]
+    optimal_f1 = f1_scores[optimal_idx]
+    ax.axvline(
+        optimal_thresh,
+        color="red",
+        linestyle="--",
+        linewidth=2,
+        alpha=0.7,
+        label=f"Optimal Threshold ({optimal_thresh:.2f})",
+    )
+
+    ax.set_xlabel("Classification Threshold", fontsize=12)
+    ax.set_ylabel("Score", fontsize=12)
+    ax.set_title(title, fontsize=14)
+    ax.legend(loc="best", fontsize=10)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_class_distribution(
+    y_true: np.ndarray,
+    class_names: list,
+    save_path: Path,
+    title: str = "Dataset Class Distribution",
+) -> None:
+    """Plot bar chart of class distribution."""
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    classes, counts = np.unique(y_true, return_counts=True)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    colors = plt.cm.tab10(np.linspace(0, 1, len(classes)))
+    bars = ax.bar(
+        [class_names[c] if c < len(class_names) else f"Class_{c}" for c in classes],
+        counts,
+        color=colors,
+        edgecolor="black",
+        alpha=0.8,
+    )
+
+    ax.set_ylabel("Number of Samples", fontsize=12)
+    ax.set_xlabel("Class", fontsize=12)
+    ax.set_title(title, fontsize=14)
+    ax.tick_params(axis="x", rotation=45, labelsize=10)
+    ax.grid(True, alpha=0.3, axis="y")
+
+    for bar, count in zip(bars, counts):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + count * 0.01,
+            f"{count:,}",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontweight="bold",
+        )
+
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_error_analysis(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    class_names: list,
+    save_path: Path,
+    title: str = "Error Analysis by Clone Type",
+) -> None:
+    """Plot stacked bar chart showing FP/FN breakdown by class."""
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    n_classes = len(np.unique(y_true))
+    cm = confusion_matrix(y_true, y_pred)
+    fp_per_class = np.sum(cm, axis=0) - np.diag(cm)
+    fn_per_class = np.sum(cm, axis=1) - np.diag(cm)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    x = np.arange(n_classes)
+    width = 0.35
+
+    bars1 = ax.bar(
+        x - width / 2,
+        fp_per_class,
+        width,
+        label="False Positives",
+        color="#FF9800",
+        edgecolor="black",
+        alpha=0.8,
+    )
+    bars2 = ax.bar(
+        x + width / 2,
+        fn_per_class,
+        width,
+        label="False Negatives",
+        color="#F44336",
+        edgecolor="black",
+        alpha=0.8,
+    )
+
+    ax.set_ylabel("Number of Errors", fontsize=12)
+    ax.set_xlabel("Class", fontsize=12)
+    ax.set_title(title, fontsize=14)
+    ax.set_xticks(x)
+    ax.set_xticklabels(class_names[:n_classes], rotation=45, fontsize=10)
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3, axis="y")
+
+    for bar in bars1:
+        height = bar.get_height()
+        if height > 0:
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                height + 1,
+                f"{int(height)}",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+            )
+    for bar in bars2:
+        height = bar.get_height()
+        if height > 0:
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                height + 1,
+                f"{int(height)}",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+            )
+
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_feature_group_contribution(
+    feature_names: list,
+    feature_importance: dict,
+    save_path: Path,
+    title: str = "Feature Group Contribution",
+) -> None:
+    """Plot bar chart showing contribution of feature groups."""
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    groups = {"lexical": [], "structural": [], "quantitative": []}
+
+    for name, importance in feature_importance.items():
+        if name.startswith("lex_"):
+            groups["lexical"].append(importance)
+        elif name.startswith("struct_"):
+            groups["structural"].append(importance)
+        elif name.startswith("quant_"):
+            groups["quantitative"].append(importance)
+
+    group_means = {g: np.mean(v) if v else 0.0 for g, v in groups.items()}
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    group_names = list(group_means.keys())
+    group_values = list(group_means.values())
+    colors = ["#2196F3", "#4CAF50", "#FF9800"]
+    bars = ax.bar(group_names, group_values, color=colors, edgecolor="black", alpha=0.8, width=0.6)
+
+    ax.set_ylabel("Mean Feature Importance", fontsize=12)
+    ax.set_xlabel("Feature Group", fontsize=12)
+    ax.set_title(title, fontsize=14)
+    ax.tick_params(axis="x", labelsize=10)
+    ax.grid(True, alpha=0.3, axis="y")
+
+    for bar, val in zip(bars, group_values):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
+                f"{val:.4f}", ha="center", va="bottom", fontsize=10, fontweight="bold")
+
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_lsh_pareto_curve(
+    lsh_configs: list,
+    save_path: Path,
+    title: str = "LSH Trade-off: Speed vs Accuracy",
+) -> None:
+    """Plot Pareto curve for LSH configurations (reduction vs F1)."""
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    reductions = [cfg["reduction"] for cfg in lsh_configs]
+    f1_scores = [cfg["f1"] for cfg in lsh_configs]
+    recalls = [cfg["recall"] for cfg in lsh_configs]
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    scatter = ax.scatter(reductions, f1_scores, s=150, c=recalls,
+                         cmap="RdYlGn", alpha=0.7, edgecolors="black", linewidths=2)
+
+    for i, cfg in enumerate(lsh_configs):
+        ax.annotate(cfg["name"], (reductions[i], f1_scores[i]),
+                    xytext=(5, 5), textcoords="offset points", fontsize=9, fontweight="bold")
+
+    sorted_idx = np.argsort(reductions)
+    ax.plot(np.array(reductions)[sorted_idx], np.array(f1_scores)[sorted_idx],
+            "k--", alpha=0.5, linewidth=1)
+
+    ax.set_xlabel("Candidate Reduction (%)", fontsize=12)
+    ax.set_ylabel("F1 Score", fontsize=12)
+    ax.set_title(title, fontsize=14)
+    ax.grid(True, alpha=0.3)
+    cbar = plt.colorbar(scatter, ax=ax)
+    cbar.set_label("Recall", fontsize=10)
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_lsh_recall_vs_reduction(
+    lsh_configs: list,
+    save_path: Path,
+    title: str = "LSH: Candidate Reduction vs Recall",
+) -> None:
+    """Plot line chart: LSH reduction vs recall."""
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    reductions = [cfg["reduction"] for cfg in lsh_configs]
+    recalls = [cfg["recall"] for cfg in lsh_configs]
+
+    sorted_idx = np.argsort(reductions)
+    reductions = np.array(reductions)[sorted_idx]
+    recalls = np.array(recalls)[sorted_idx]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(reductions, recalls, marker="o", linewidth=2, markersize=8,
+            color="#2196F3", markerfacecolor="#FF9800", markeredgecolor="black", markeredgewidth=1.5)
+
+    for i, cfg in enumerate(lsh_configs):
+        idx = sorted_idx.tolist().index(i)
+        ax.annotate(cfg["name"], (reductions[idx], recalls[idx]),
+                    xytext=(5, 5), textcoords="offset points", fontsize=9)
+
+    ax.set_xlabel("Candidate Reduction (%)", fontsize=12)
+    ax.set_ylabel("Recall", fontsize=12)
+    ax.set_title(title, fontsize=14)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
