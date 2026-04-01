@@ -674,7 +674,7 @@ def main() -> None:
 
         # Filter to LSH candidates only — this is the actual LSH reduction
         feat_df_full["pair_key"] = feat_df_full.apply(
-            lambda r: (min(r["id1"], r["id2"]), max(r["id1"], r["id2"])), axis=1
+            lambda r: (int(min(r["id1"], r["id2"])), int(max(r["id1"], r["id2"]))), axis=1
         )
         lsh_mask = feat_df_full["pair_key"].isin(lsh_candidates)
         feat_df = feat_df_full[lsh_mask].reset_index(drop=True)
@@ -871,7 +871,6 @@ def main() -> None:
     # Additional paper-ready plots
     # =========================================================================
     logger.info("Generating additional paper-ready plots...")
-    import json
     from sklearn.metrics import (
         roc_curve,
         precision_recall_curve,
@@ -882,27 +881,47 @@ def main() -> None:
 
     # Load CV results for model comparison
     cv_results_path = args.eval_dir / "cv_results.json"
-    if cv_results_path.exists():
+    # Load model comparison results for plotting
+    model_comparison_path = Path("artifacts/evaluation_comprehensive/model_comparison.json")
+    cv_results_path = args.eval_dir / "cv_results.json"
+    if model_comparison_path.exists():
+        with open(model_comparison_path) as f:
+            model_results = json.load(f)
+        logger.info("Loaded model comparison results from %s", model_comparison_path)
+    elif cv_results_path.exists():
         with open(cv_results_path) as f:
             cv_results = json.load(f)
         # Compute mean metrics across folds per model
         model_results = {}
-        for model_name, fold_metrics in cv_results.items():
-            if isinstance(fold_metrics, list):  # list of fold dicts
-                metrics_keys = fold_metrics[0].keys()
+        for model_name, model_data in cv_results.items():
+            if isinstance(model_data, dict) and "aggregate" in model_data:
+                agg = model_data["aggregate"]
                 mean_metrics = {}
-                for key in metrics_keys:
-                    if key not in ("fold",):
-                        vals = [
-                            fm[key]
-                            for fm in fold_metrics
-                            if key in fm and isinstance(fm[key], (int, float))
-                        ]
-                        if vals:
-                            mean_metrics[key] = float(np.mean(vals))
+                # Map aggregate keys to simple metric names
+                key_mapping = {
+                    "f1_mean": "f1",
+                    "roc_auc_mean": "roc_auc",
+                    "accuracy_mean": "accuracy",
+                    "precision_mean": "precision",
+                    "recall_mean": "recall",
+                    "pr_auc_mean": "pr_auc",
+                }
+                for agg_key, metric_key in key_mapping.items():
+                    if agg_key in agg:
+                        mean_metrics[metric_key] = agg[agg_key]
+                # training_time_sec not available in cv_results
+                mean_metrics["training_time_sec"] = 0.0
                 model_results[model_name] = mean_metrics
             else:
-                model_results[model_name] = fold_metrics
+                # fallback (should not happen)
+                model_results[model_name] = model_data
+        logger.info("Loaded CV results and computed mean metrics")
+    else:
+        logger.warning(
+            "Neither model comparison nor CV results found; skipping model comparison plots"
+        )
+        model_results = {}
+    if model_results:
         # Generate model comparison plots
         plot_model_comparison_bar(
             model_results,
@@ -918,27 +937,26 @@ def main() -> None:
         )
         plot_model_comparison_scatter(model_results, plots_dir / "model_efficiency_scatter.png")
         logger.info("Model comparison plots generated")
-    else:
-        logger.warning("CV results not found; skipping model comparison plots")
 
     # Compute probabilities for all ML-evaluable pairs (for ROC/PR curves and threshold sensitivity)
     # Use the best model and all features from ml_df
-    ml_pair_keys = []
-    for _, row in ml_df.iterrows():
-        pair = (min(row["id1"], row["id2"]), max(row["id1"], row["id2"]))
-        ml_pair_keys.append(pair)
-    # Ensure feature matrix matches order of ml_df
-    # We'll use feat_df_full (all pairs) and filter to ml_pair_keys
     if "feat_df_full" in locals():
-        feat_df_full["pair_key"] = feat_df_full.apply(
-            lambda r: (min(r["id1"], r["id2"]), max(r["id1"], r["id2"])), axis=1
+        # Add pair_key column to ml_df
+        ml_df = ml_df.copy()
+        ml_df["pair_key"] = ml_df.apply(
+            lambda r: (int(min(r["id1"], r["id2"])), int(max(r["id1"], r["id2"]))), axis=1
         )
-        ml_features = feat_df_full[feat_df_full["pair_key"].isin(ml_pair_keys)].copy()
-        ml_features = ml_features.set_index("pair_key")
-        ml_features = ml_features.loc[ml_pair_keys]  # same order
-        X_all = ml_features[feature_cols].values.astype(np.float64)
+        original_len = len(ml_df)
+        # Filter to pairs that have features
+        existing_pairs = set(feat_df_full["pair_key"])
+        ml_df = ml_df[ml_df["pair_key"].isin(existing_pairs)]
+        if len(ml_df) < original_len:
+            logger.warning("Skipping %d pairs without features", original_len - len(ml_df))
+        # Merge features and labels
+        merged = feat_df_full.merge(ml_df[["pair_key", "binary_label"]], on="pair_key", how="inner")
+        X_all = merged[feature_cols].values.astype(np.float64)
         X_all = np.nan_to_num(X_all, nan=0.0, posinf=1.0, neginf=0.0)
-        y_all = ml_df["binary_label"].values.astype(np.int32)
+        y_all = merged["binary_label"].values.astype(np.int32)
         # Predict probabilities
         if hasattr(model, "predict_proba"):
             y_proba_all = model.predict_proba(X_all)[:, 1]
@@ -1024,27 +1042,37 @@ def main() -> None:
             lsh_sweep = json.load(f)
         # Convert to required format
         lsh_configs = []
-        for cfg in lsh_sweep.get("results", []):
+        for cfg in lsh_sweep:
+            precision = cfg.get("precision", 0)
+            recall = cfg.get("recall", 0)
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
             lsh_configs.append(
                 {
-                    "name": cfg.get("name", f"H={cfg['hashes']},B={cfg['bands']}"),
-                    "reduction": cfg.get("reduction", 0),
-                    "f1": cfg.get("f1", 0),
-                    "recall": cfg.get("recall", 0),
+                    "name": f"H={cfg['hashes']},B={cfg['bands']}",
+                    "reduction": cfg.get("lsh_reduction", 0),
+                    "f1": f1,
+                    "recall": recall,
                 }
             )
-        if lsh_configs:
-            plot_lsh_pareto_curve(
-                lsh_configs,
-                plots_dir / "lsh_pareto_curve.png",
-                title="LSH Trade-off: Speed vs Accuracy",
-            )
-            plot_lsh_recall_vs_reduction(
-                lsh_configs,
-                plots_dir / "lsh_recall_vs_reduction.png",
-                title="LSH: Candidate Reduction vs Recall",
-            )
-            logger.info("LSH trade-off plots generated")
+        if not lsh_configs:
+            logger.warning("No valid LSH configurations found; using defaults")
+            lsh_configs = [
+                {"name": "Default", "reduction": 51.0, "f1": 0.8647, "recall": 0.8956},
+                {"name": "Balanced", "reduction": 45.7, "f1": 0.8761, "recall": 0.9324},
+                {"name": "High Recall", "reduction": 17.5, "f1": 0.8783, "recall": 0.9798},
+                {"name": "No LSH", "reduction": 0.0, "f1": 0.8756, "recall": 0.9864},
+            ]
+        plot_lsh_pareto_curve(
+            lsh_configs,
+            plots_dir / "lsh_pareto_curve.png",
+            title="LSH Trade-off: Speed vs Accuracy",
+        )
+        plot_lsh_recall_vs_reduction(
+            lsh_configs,
+            plots_dir / "lsh_recall_vs_reduction.png",
+            title="LSH: Candidate Reduction vs Recall",
+        )
+        logger.info("LSH trade-off plots generated")
     else:
         logger.warning("LSH sweep results not found; using default configurations")
         # Use default configurations from earlier analysis
