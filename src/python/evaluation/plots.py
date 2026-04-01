@@ -38,6 +38,12 @@ def plot_roc_curves(
     """
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Check if any fold has ROC curve data
+    has_curve_data = any("fpr" in fold and "tpr" in fold for fold in fold_results)
+    if not has_curve_data:
+        # No ROC curve data available, skip plotting
+        return
+
     fig, ax = plt.subplots(figsize=(10, 8))
 
     # Plot individual folds
@@ -110,6 +116,12 @@ def plot_pr_curves(
         show_mean: Whether to plot mean PR curve
     """
     save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Check if any fold has PR curve data
+    has_curve_data = any("precision" in fold and "recall" in fold for fold in fold_results)
+    if not has_curve_data:
+        # No PR curve data available, skip plotting
+        return
 
     fig, ax = plt.subplots(figsize=(10, 8))
 
@@ -271,6 +283,10 @@ def plot_confusion_matrix(
         cmap: Colormap name
     """
     save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if cm.size == 0:
+        # Empty confusion matrix, nothing to plot
+        return
 
     n_classes = cm.shape[0]
     if class_names is None:
@@ -561,6 +577,10 @@ def plot_runtime_per_stage(
     """
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
+    if not stages or not times or len(stages) != len(times):
+        # Nothing to plot
+        return
+
     fig, ax = plt.subplots(figsize=(10, max(5, len(stages) * 0.8)))
 
     y_pos = np.arange(len(stages))
@@ -641,6 +661,9 @@ def plot_model_comparison_bar(
     """Plot bar chart comparing models by a specific metric."""
     save_path.parent.mkdir(parents=True, exist_ok=True)
     models = list(model_results.keys())
+    if not models:
+        # No models to compare
+        return
     values = [model_results[m].get(metric, 0) for m in models]
 
     fig, ax = plt.subplots(figsize=(12, 6))

@@ -49,15 +49,15 @@ def evaluate_fold(y_true, y_pred, y_proba=None, fold_idx=0) -> dict:
             fpr, tpr, _ = roc_curve(y_true, y_proba)
             metrics["fpr"] = fpr.tolist()
             metrics["tpr"] = tpr.tolist()
-        except (ValueError, IndexError):
-            pass
+        except (ValueError, IndexError) as e:
+            logger.debug(f"Fold {fold_idx}: Could not compute ROC curve: {e}")
 
         try:
             precision, recall, _ = precision_recall_curve(y_true, y_proba)
             metrics["precision"] = precision.tolist()
             metrics["recall"] = recall.tolist()
-        except (ValueError, IndexError):
-            pass
+        except (ValueError, IndexError) as e:
+            logger.debug(f"Fold {fold_idx}: Could not compute PR curve: {e}")
 
     return metrics
 

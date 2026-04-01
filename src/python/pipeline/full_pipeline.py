@@ -784,7 +784,6 @@ def main() -> None:
     metrics["total_time_sec"] = total_time
 
     args.eval_dir.mkdir(parents=True, exist_ok=True)
-    save_json(metrics, args.eval_dir / "pipeline_metrics.json")
 
     # Plots directory
     plots_dir = args.eval_dir / "plots" / "pipeline"
@@ -792,19 +791,25 @@ def main() -> None:
 
     # Multi-class evaluation (Non, Type-1, Type-2, Type-3)
     # Build ground truth and predictions for all pairs
-    from sklearn.metrics import confusion_matrix, classification_report
+    from sklearn.metrics import (
+        confusion_matrix,
+        classification_report,
+        precision_score,
+        recall_score,
+        f1_score,
+        accuracy_score,
+    )
 
-    all_pairs = list(ground_truth.keys())
+    all_pairs = list(ground_truth_all.keys())
     y_true = np.array([ground_truth_all[p] for p in all_pairs])
     y_pred = np.array([predictions.get(p, 0) for p in all_pairs])
 
-    # Get unique classes in predictions
-    unique_classes = sorted(set(y_pred) | set(y_true))
+    # Define all four classes and their names
+    all_classes = [0, 1, 2, 3]
     class_names = ["Non-clone", "Type-1", "Type-2", "Type-3"]
 
-    # Compute confusion matrix with only present classes
-    cm = confusion_matrix(y_true, y_pred, labels=unique_classes)
-    cm_class_names = [class_names[i] for i in unique_classes if i < len(class_names)]
+    # Compute confusion matrix with all four classes
+    cm = confusion_matrix(y_true, y_pred, labels=all_classes)
 
     # Save confusion matrix
     from src.python.evaluation.plots import plot_confusion_matrix
@@ -812,16 +817,29 @@ def main() -> None:
     plot_confusion_matrix(
         cm,
         plots_dir / "confusion_matrix_multiclass.png",
-        class_names=cm_class_names,
+        class_names=class_names,
         title="Confusion Matrix (Full Pipeline)",
     )
 
-    # Save classification report (only for present classes)
+    # Compute multiclass metrics (weighted average)
+    precision_weighted = precision_score(y_true, y_pred, labels=all_classes, average='weighted', zero_division=0)
+    recall_weighted = recall_score(y_true, y_pred, labels=all_classes, average='weighted', zero_division=0)
+    f1_weighted = f1_score(y_true, y_pred, labels=all_classes, average='weighted', zero_division=0)
+    accuracy_multiclass = accuracy_score(y_true, y_pred)
+
+    # Add multiclass metrics to the existing metrics dict
+    metrics['precision_weighted'] = float(precision_weighted)
+    metrics['recall_weighted'] = float(recall_weighted)
+    metrics['f1_weighted'] = float(f1_weighted)
+    metrics['accuracy_multiclass'] = float(accuracy_multiclass)
+
+    # Save classification report (including all four classes)
     report = classification_report(
-        y_true, y_pred, labels=unique_classes, target_names=cm_class_names, output_dict=True
+        y_true, y_pred, labels=all_classes, target_names=class_names, output_dict=True
     )
     save_json(report, args.eval_dir / "classification_report.json")
     logger.info("Multi-class confusion matrix and classification report saved")
+    save_json(metrics, args.eval_dir / "pipeline_metrics.json")
 
     # Stacked bar: clones per type
     type1_count = len(type1_pairs)
