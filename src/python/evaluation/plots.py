@@ -660,7 +660,8 @@ def plot_model_comparison_bar(
 ) -> None:
     """Plot bar chart comparing models by a specific metric."""
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    models = list(model_results.keys())
+    # Filter to only include dict entries (skip strings, numbers, etc.)
+    models = [m for m in model_results.keys() if isinstance(model_results[m], dict)]
     if not models:
         # No models to compare
         return
@@ -1024,8 +1025,15 @@ def plot_feature_group_contribution(
     ax.grid(True, alpha=0.3, axis="y")
 
     for bar, val in zip(bars, group_values):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
-                f"{val:.4f}", ha="center", va="bottom", fontsize=10, fontweight="bold")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.01,
+            f"{val:.4f}",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontweight="bold",
+        )
 
     plt.tight_layout()
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
@@ -1044,16 +1052,35 @@ def plot_lsh_pareto_curve(
     recalls = [cfg["recall"] for cfg in lsh_configs]
 
     fig, ax = plt.subplots(figsize=(12, 6))
-    scatter = ax.scatter(reductions, f1_scores, s=150, c=recalls,
-                         cmap="RdYlGn", alpha=0.7, edgecolors="black", linewidths=2)
+    scatter = ax.scatter(
+        reductions,
+        f1_scores,
+        s=150,
+        c=recalls,
+        cmap="RdYlGn",
+        alpha=0.7,
+        edgecolors="black",
+        linewidths=2,
+    )
 
     for i, cfg in enumerate(lsh_configs):
-        ax.annotate(cfg["name"], (reductions[i], f1_scores[i]),
-                    xytext=(5, 5), textcoords="offset points", fontsize=9, fontweight="bold")
+        ax.annotate(
+            cfg["name"],
+            (reductions[i], f1_scores[i]),
+            xytext=(5, 5),
+            textcoords="offset points",
+            fontsize=9,
+            fontweight="bold",
+        )
 
     sorted_idx = np.argsort(reductions)
-    ax.plot(np.array(reductions)[sorted_idx], np.array(f1_scores)[sorted_idx],
-            "k--", alpha=0.5, linewidth=1)
+    ax.plot(
+        np.array(reductions)[sorted_idx],
+        np.array(f1_scores)[sorted_idx],
+        "k--",
+        alpha=0.5,
+        linewidth=1,
+    )
 
     ax.set_xlabel("Candidate Reduction (%)", fontsize=12)
     ax.set_ylabel("F1 Score", fontsize=12)
@@ -1081,13 +1108,27 @@ def plot_lsh_recall_vs_reduction(
     recalls = np.array(recalls)[sorted_idx]
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(reductions, recalls, marker="o", linewidth=2, markersize=8,
-            color="#2196F3", markerfacecolor="#FF9800", markeredgecolor="black", markeredgewidth=1.5)
+    ax.plot(
+        reductions,
+        recalls,
+        marker="o",
+        linewidth=2,
+        markersize=8,
+        color="#2196F3",
+        markerfacecolor="#FF9800",
+        markeredgecolor="black",
+        markeredgewidth=1.5,
+    )
 
     for i, cfg in enumerate(lsh_configs):
         idx = sorted_idx.tolist().index(i)
-        ax.annotate(cfg["name"], (reductions[idx], recalls[idx]),
-                    xytext=(5, 5), textcoords="offset points", fontsize=9)
+        ax.annotate(
+            cfg["name"],
+            (reductions[idx], recalls[idx]),
+            xytext=(5, 5),
+            textcoords="offset points",
+            fontsize=9,
+        )
 
     ax.set_xlabel("Candidate Reduction (%)", fontsize=12)
     ax.set_ylabel("Recall", fontsize=12)

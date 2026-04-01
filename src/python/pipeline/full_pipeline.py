@@ -912,7 +912,8 @@ def main() -> None:
         # Compute mean metrics across folds per model
         model_results = {}
         for model_name, model_data in cv_results.items():
-            if isinstance(model_data, dict) and "aggregate" in model_data:
+            # Only include actual model results (dict with aggregate and folds)
+            if isinstance(model_data, dict) and "aggregate" in model_data and "folds" in model_data:
                 agg = model_data["aggregate"]
                 mean_metrics = {}
                 # Map aggregate keys to simple metric names
@@ -930,9 +931,7 @@ def main() -> None:
                 # training_time_sec not available in cv_results
                 mean_metrics["training_time_sec"] = 0.0
                 model_results[model_name] = mean_metrics
-            else:
-                # fallback (should not happen)
-                model_results[model_name] = model_data
+            # Skip non-model entries like 'best_model', 'best_f1', 'feature_importance'
         logger.info("Loaded CV results and computed mean metrics")
     else:
         logger.warning(
